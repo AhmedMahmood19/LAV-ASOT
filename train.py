@@ -89,7 +89,7 @@ class AlignNet(LightningModule):
 
         loss = loss / self.batch_size
 
-        tensorboard_logs = {'train_loss': loss}
+        tensorboard_logs = {'train_loss': loss.detach()}
 
         return {'loss': loss, 'log': tensorboard_logs}
 
