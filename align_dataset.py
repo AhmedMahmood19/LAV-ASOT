@@ -68,20 +68,26 @@ def sample_frames(frames, num_frames, num_context, frame_stride,
         steps = np.stack([pos_steps, steps])
         steps = steps.T.reshape((-1, ))
     
+    # The mask will be the same length as steps, initialize with Trues
+    mask = np.full(len(steps), True, dtype=bool)
+    # If a step > final frame's index(seq_len-1), set a False in the mask for this step
+    mask[steps > (seq_len - 1)] = False
+    # If a step > final frame's index(seq_len-1), replace that step with the final frame's index 
     steps = np.minimum(steps, seq_len-1)
     chosen_steps = steps.astype(np.float32) / seq_len
     steps = get_steps_with_context(steps, num_context, context_stride)
 
     frames = np.array(frames)[steps]
 
-    return frames, chosen_steps, float(seq_len)
+    return frames, chosen_steps, float(seq_len), mask
 
 
 class AlignData(Dataset):
 
     def __init__(self, path, num_frames, data_config, neg_example=False, transform=False, flatten=False):
-
+        # sorted list of paths of all video folders
         self.act_sequences = sorted(glob.glob(os.path.join(path, '*')))
+        # number of video folders
         self.n_sequences = len(self.act_sequences)
         
         self.n_classes = len(self.act_sequences)
@@ -119,7 +125,15 @@ class AlignData(Dataset):
         #                                             random_offset=config.RANDOM_OFFSET, context_stride=config.CONTEXT_STRIDE,
         #                                             is_tcn=config.TCN.IS_TCN, tcn_window=config.TCN.POS_WINDOW)
     
-        a_frames, a_chosen_steps, a_seq_len = sample_frames(a_frames, num_frames=self.num_frames, num_context=config.NUM_CONTEXT, 
+    
+        # e.g. no. of frames to sample is 20, we must stack 2 context frames for each sampled frame(the sampled frame itself is considered one of the context frames too I think?), and the stride between context frames is 15
+        # this func first samples 20 frames, then picks the frame which is 15 frames before(pick frame 0 to avoid negative index) each of these frames, leading to 40 sampled frames in total
+
+        # a_frames=paths to the 40 sampled+context frames
+        # a_chosen_steps=indices of the 20 sampled frames, divided by a_seq_len
+        # a_seq_len=number of frames in the video folder
+        # a_mask=binary mask for a_chosen to indicate padding
+        a_frames, a_chosen_steps, a_seq_len, a_mask = sample_frames(a_frames, num_frames=self.num_frames, num_context=config.NUM_CONTEXT, 
                                                 frame_stride=config.FRAME_STRIDE, sampling=config.SAMPLING_STRATEGY, 
                                                 random_offset=config.RANDOM_OFFSET, context_stride=config.CONTEXT_STRIDE)
 
@@ -129,20 +143,22 @@ class AlignData(Dataset):
         #                                             random_offset=config.RANDOM_OFFSET, context_stride=config.CONTEXT_STRIDE,
         #                                             is_tcn=config.TCN.IS_TCN, tcn_window=config.TCN.POS_WINDOW)
 
-        b_frames, b_chosen_steps, b_seq_len = sample_frames(b_frames, num_frames=self.num_frames, num_context=config.NUM_CONTEXT, 
+        b_frames, b_chosen_steps, b_seq_len, b_mask = sample_frames(b_frames, num_frames=self.num_frames, num_context=config.NUM_CONTEXT, 
                                             frame_stride=config.FRAME_STRIDE, sampling=config.SAMPLING_STRATEGY, 
                                             random_offset=config.RANDOM_OFFSET, context_stride=config.CONTEXT_STRIDE)
 
+        # use the paths of the 40 sampled+context frames to load and transform them, to prepare them for the Resnet and encoder
         a_x = utils.get_pil_images(a_frames)
         b_x = utils.get_pil_images(b_frames)
 
         a_x = self.transform(a_x)
         b_x = self.transform(b_x)
 
+        # Save the video names, probably for evaluation to load the groundtruth file?
         a_name = 'Vid_{}'.format(os.path.basename(a))
         b_name = 'Vid_{}'.format(os.path.basename(b))
 
-        result = [[a_x, a_name, a_chosen_steps, a_seq_len], [b_x, b_name, b_chosen_steps, b_seq_len]]
+        result = [[a_x, a_name, a_chosen_steps, a_seq_len, a_mask], [b_x, b_name, b_chosen_steps, b_seq_len, b_mask]]
 
         if self.flatten:
             for item in result:
