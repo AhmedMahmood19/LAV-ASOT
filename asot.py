@@ -179,7 +179,8 @@ def asot_objective(T, cost_matrix, eps, alpha, radius, ub_frames, ub_actions,
 def segment_asot(cost_matrix, mask_X=None, mask_Y=None, eps=0.07, alpha=0.3, radius=0.04, ub_frames=False,
                  ub_actions=True, lambda_frames=0.1, lambda_actions=0.05, n_iters=(25, 1),
                  stable_thres=7., step_size=None):
-    
+
+    # print(lambda_frames)
     # Get the device of this tensor
     dev = cost_matrix.device
     # B is batch size, N is no. of frames in video X, K is no. of frames in video Y
@@ -192,6 +193,13 @@ def segment_asot(cost_matrix, mask_X=None, mask_Y=None, eps=0.07, alpha=0.3, rad
         mask_X = torch.full((B, N), 1, dtype=bool, device=dev)
     if mask_Y is None:
         mask_Y = torch.full((B, N), 1, dtype=bool, device=dev)
+
+    mask_X = torch.cat((torch.ones(1, 1, dtype=torch.bool).to(dev), mask_X), dim=1)
+    mask_X[:,0] = True
+
+    mask_Y = torch.cat((torch.ones(1,1, dtype=torch.bool).to(dev), mask_Y), dim=1)
+    mask_Y[:,0] = True
+
 
     # When computing p and q from section 4.1, we need to use the actual no. of frames in each video without padding
     # Count the no. of frames in each video X in this batch, excluding the padding frames(duplicates of the final frame where mask contains a False).
@@ -266,12 +274,21 @@ def segment_asot(cost_matrix, mask_X=None, mask_Y=None, eps=0.07, alpha=0.3, rad
             T = T * dy.transpose(1, 2)
         
         it += 1
-    
+
+    # print(nnz_X.shape)
+    # print(nnz_X)
     # The row-sum of every row will be 1.0
     # TODO: The col-sum of each col is not enforced to be 1.0 right now, might need to change this for VAOT
+
     T = T * nnz_X[:, None, None]  # rescale so marginals per frame(of video X) sum to 1
+    # print(T)
+    # row_sum = T.sum(dim=1)
+    # is_row_sum_1 = (row_sum == 1).all()
+
+    # print(is_row_sum_1)
+    # print(T[:,1:,1:].shape)
     obj_trace = torch.cat(obj_trace)
-    return T, obj_trace
+    return T[:,1:,1:], obj_trace
 
 # ρR = rho * Temporal prior
 # In the temporal prior formula: N=no. of sampled frames from video X, K=no. of sampled frames from video Y (Used to be no. of clusters in ASOT)
