@@ -124,8 +124,8 @@ def evaluate_phase_progression(train_data, val_data, action, ckpt_step, CONFIG, 
 			writer.add_scalar(f'phase_progression/val_{action}_{fraction_used}', val_score, global_step=ckpt_step)
 
 		
-		print(f'phase_progression/train_{action}_{fraction_used}', train_score, f"global_step={ckpt_step}")
-		print(f'phase_progression/val_{action}_{fraction_used}', val_score, f"global_step={ckpt_step}")
+		# print(f'phase_progression/train_{action}_{fraction_used}', train_score, f"global_step={ckpt_step}")
+		# print(f'phase_progression/val_{action}_{fraction_used}', val_score, f"global_step={ckpt_step}")
 		train_scores.append(train_score)
 		val_scores.append(val_score)
 

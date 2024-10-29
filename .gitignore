@@ -1,4 +1,14 @@
 Data
+Data_Test
 __pycache__
 .vscode
 LOGS
+LOGS2
+aplog
+log*
+npyrecords*
+
+# temporary files to run on 2nd GPU
+train2.py
+evaluations2.py
+config2.py
