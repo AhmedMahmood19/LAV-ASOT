@@ -1,5 +1,5 @@
 import numpy as np
-
+import os, json
 from sklearn.svm import SVC
 from sklearn.neighbors import NearestNeighbors
 from sklearn.metrics import accuracy_score, confusion_matrix
@@ -47,46 +47,95 @@ def evaluate_phase_classification(ckpt_step, train_embs, train_labels, val_embs,
         svm_model, train_acc = fit_svm(embs, labs)
         val_acc, conf_mat = evaluate_svm(svm_model, val_embs, val_labels)
 
-        print('\n-----------------------------')
-        print('Fraction: ', frac)
-        print('Train-Acc: ', train_acc)
-        print('Val-Acc: ', val_acc)
-        print('Conf-Mat: ', conf_mat)
+        if verbose:
+            print('\n-----------------------------')
+            print('Fraction: ', frac)
+            print('Train-Acc: ', train_acc)
+            print('Val-Acc: ', val_acc)
+            print('Conf-Mat: ', conf_mat)
 
 
         writer.add_scalar(f'classification/train_{act_name}_{frac}', train_acc, global_step=ckpt_step)
         writer.add_scalar(f'classification/val_{act_name}_{frac}', val_acc, global_step=ckpt_step)
         
-        print(f'classification/train_{act_name}_{frac}', train_acc, f"global_step={ckpt_step}")
-        print(f'classification/val_{act_name}_{frac}', val_acc, f"global_step={ckpt_step}")
+        # print(f'classification/train_{act_name}_{frac}', train_acc, f"global_step={ckpt_step}")
+        print(f'IMPORTANT!!!         classification/val_{act_name}_{frac}', val_acc, f"global_step={ckpt_step}")
 
     return train_acc, val_acc
 
 
-def _compute_ap(val_embs, val_labels):
-    results = []
+def _compute_ap(query_frames, support_frames, query_labels, support_labels, query_frame_paths=None, support_frame_paths=None, log=False):
+    # Initialize AP sums for k = 5, 10, 15
+    query_AP_sums = {5: 0, 10: 0, 15: 0}
+
+    frame_logs = {f'AP@{k}': {} for k in [5, 10, 15]} if log else None
+    
     for k in [5, 10, 15]:
-        nbrs = NearestNeighbors(n_neighbors=k).fit(val_embs)
-        distances, indices = nbrs.kneighbors(val_embs)
-        vals = []
-        for i in range(val_embs.shape[0]):
-            a = np.array([val_labels[i]] * k)
-            b = indices[i]
-            b = np.array([val_labels[k] for k in b])
+
+        # Train the NN model on the embeddings from the support set
+        NN = NearestNeighbors(n_neighbors=k).fit(support_frames)
+        # Find the k nearest neighbours of the embeddings from the query set
+        dists, indices = NN.kneighbors(query_frames)
+
+        # Calculate frame retrieval accuracy for each query frame i from the query set
+        for i in range(query_frames.shape[0]):
+            # true label of frame i, repeated k times
+            a = np.array([query_labels[i]] * k)
+            # using the indices of the k nearest frames of frame i, find the labels of these k nearest frames
+            b = support_labels[indices[i]]
+            # calculate the ratio of the retrieved frames with the same label as the query frame i 
             val = (a==b).sum()/k
-            vals.append(val)
+            # Accumulate AP scores
+            query_AP_sums[k] += val
 
-        results.append(np.mean(vals))
-    return results
 
-def compute_ap(videos, labels):
-    ap5, ap10, ap15 = 0, 0, 0
-    for v,l in zip(videos, labels):
-        a5, a10, a15 = _compute_ap(v,l)
-        ap5 += a5
-        ap10 += a10
-        ap15 += a15
-    ap5 /= len(videos)
-    ap10 /= len(videos)
-    ap15 /= len(videos)
-    return [ap5, ap10, ap15]
+            if log:
+                frame_logs[f'AP@{k}'][query_frame_paths[i]] = {
+                    'neighbours': support_frame_paths[indices[i]].tolist(),
+                    'neighbours labels': b.tolist(),
+                    'query frame label': query_labels[i],
+                    f'AP@{k}': val
+                }
+
+
+    # Return the AP sums for the query set
+    return query_AP_sums, frame_logs
+
+def compute_ap(embeddings, labels, names, frame_paths, log=False):
+    # Initialize AP sums for k = 5, 10, 15
+    all_AP_sums = {5: 0, 10: 0, 15: 0}
+    num_vids = len(embeddings)
+
+    if log:
+        os.makedirs("AP-Logs", exist_ok=True)
+
+    # For each video, use its frames as the query set while treating frames from all other videos as the support set
+    for i in range(num_vids):
+
+        # Create query and support arrays
+        query_frames = embeddings[i]  # Frame embeddings for current video
+        query_labels = np.array(labels[i])  # Frame labels for current video
+        query_frame_paths = np.array(frame_paths[i]) if log else None
+
+        support_frames = np.vstack([embeddings[j] for j in range(num_vids) if j != i])  # Frame embeddings for all other videos
+        support_labels = np.hstack([labels[j] for j in range(num_vids) if j != i])  # Frame labels for all other videos
+        support_frame_paths = np.hstack([frame_paths[j] for j in range(num_vids) if j != i]) if log else None
+
+
+        # Get AP scores for the query set
+        query_AP_sums, frame_logs = _compute_ap(query_frames, support_frames, query_labels, support_labels, query_frame_paths, support_frame_paths, log)
+
+        # Accumulate AP scores
+        for k in [5, 10, 15]:
+            all_AP_sums[k] += query_AP_sums[k]
+
+
+        if log:
+            with open(os.path.join("AP-Logs", f"framelogs-{names[i]}.json"), 'w') as json_file:
+                json.dump(frame_logs, json_file, indent=4)
+
+    # Calculate the mean AP@5, AP@10, and AP@15 scores across all frames in the dataset
+    num_frames_in_dataset = sum(len(embs) for embs in embeddings)
+    mean_AP = {f"AP@{k}": (all_AP_sums[k]/num_frames_in_dataset) for k in all_AP_sums}
+    
+    return [mean_AP['AP@5'], mean_AP['AP@10'], mean_AP['AP@15']]
