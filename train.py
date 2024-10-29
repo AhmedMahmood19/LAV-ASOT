@@ -24,6 +24,7 @@ import argparse
 
 num_eps = 1e-11
 
+
 class AlignNet(LightningModule):
     def __init__(self, config):
         super(AlignNet, self).__init__()
@@ -38,15 +39,16 @@ class AlignNet(LightningModule):
 
         self.emb = ConvEmbedder(emb_size=config.DTWALIGNMENT.EMBEDDING_SIZE, l2_normalize=config.LOSSES.L2_NORMALIZE)
 
-        self.lav_loss = losses.LAV(alpha=config.LOSSES.ALPHA, sigma=config.LOSSES.SIGMA, margin=config.LOSSES.IDM_IDX_MARGIN, 
-                            num_frames=config.TRAIN.NUM_FRAMES, dtw_gamma=config.DTWALIGNMENT.SDTW_GAMMA, 
-                            dtw_normalize=config.DTWALIGNMENT.SDTW_NORMALIZE, debug=False)
+        self.lav_loss = losses.LAV(alpha=config.LOSSES.ALPHA, sigma=config.LOSSES.SIGMA,
+                                   margin=config.LOSSES.IDM_IDX_MARGIN,
+                                   num_frames=config.TRAIN.NUM_FRAMES, dtw_gamma=config.DTWALIGNMENT.SDTW_GAMMA,
+                                   dtw_normalize=config.DTWALIGNMENT.SDTW_NORMALIZE, debug=False)
 
         # params
         self.l2_normalize = config.LOSSES.L2_NORMALIZE
         self.alpha = config.LOSSES.ALPHA
         self.sigma = config.LOSSES.SIGMA
-        
+
         self.lr = config.TRAIN.LR
         self.weight_decay = config.TRAIN.WEIGHT_DECAY
         self.batch_size = config.TRAIN.BATCH_SIZE
@@ -80,7 +82,7 @@ class AlignNet(LightningModule):
 
     def train(self, mode=True):
         super(AlignNet, self).train(mode=mode)
-        
+
         if self.freeze_base:
             if self.freeze_bn_only:
                 utils.freeze_bn_only(module=self.base_cnn)
@@ -109,9 +111,9 @@ class AlignNet(LightningModule):
 
         # Using the variable names used in VAOT
         features_X, features_Y = a_embs, b_embs
-        T_X=features_X.shape[1]
-        T_Y=features_Y.shape[1]
-        mask_X, mask_Y=a_mask, b_mask
+        T_X = features_X.shape[1]
+        T_Y = features_Y.shape[1]
+        mask_X, mask_Y = a_mask, b_mask
         # Eq (6)
         # codes represent a matrix P for each batch element
         # size of a matrix P is (no. of frames in X x no. of frames in Y)
@@ -119,23 +121,26 @@ class AlignNet(LightningModule):
         codes = torch.exp(features_X @ features_Y.transpose(1, 2) / self.temp)
         codes = codes / codes.sum(dim=-1, keepdim=True)
 
-
         # Produce pseudo-labels using ASOT, note that we don't backpropagate through this part
         with torch.no_grad():
             # Calculate the KOT cost matrix from the paragraph above Eq (7)
-            # ρR = rho * Temporal prior 
+            # ρR = rho * Temporal prior
             temp_prior = asot.temporal_prior(T_X, T_Y, self.rho, features_X.device)
             # Cost Matrix Ck from section 4.2, no need to divide by norms since both vectors were previously normalized with F.normalize()
-            cost_matrix = 1. - features_X @ features_Y.transpose(1, 2) #  0 > value > 1
+            cost_matrix = 1. - features_X @ features_Y.transpose(1, 2)
             # Ĉk = Ck + ρR
             cost_matrix += temp_prior
 
-            B,N,K = cost_matrix.shape
+
+            ## Added for virtual frames
+            B, N, K = cost_matrix.shape
             dev = cost_matrix.device
-            top_row = torch.ones(B,1,K).to(dev) * 0.5
-            cost_matrix = torch.cat((top_row,cost_matrix),dim=1)
-            left_column = torch.ones(B,N+1,1).to(dev) * 0.5
+            top_row = torch.ones(B, 1, K).to(dev) * 0.5
+            cost_matrix = torch.cat((top_row, cost_matrix), dim=1)
+            left_column = torch.ones(B, N + 1, 1).to(dev) * 0.5
             cost_matrix = torch.cat((cost_matrix, left_column), dim=2)
+
+
             # opt_codes represent a matrix Tb for each batch element
             # size of a matrix Tb is (no. of frames in X x no. of frames in Y)
             # Tb are the (soft) pseudo-labels defined above Eq (7)
@@ -144,9 +149,9 @@ class AlignNet(LightningModule):
             opt_codes, _ = asot.segment_asot(cost_matrix=cost_matrix, mask_X=mask_X, mask_Y=mask_Y,
                                              eps=self.train_eps, alpha=self.alpha_train, radius=self.radius_gw,
                                              ub_frames=self.ub_frames, ub_actions=self.ub_actions,
-                                             lambda_frames=self.lambda_frames_train, lambda_actions=self.lambda_actions_train,
+                                             lambda_frames=self.lambda_frames_train,
+                                             lambda_actions=self.lambda_actions_train,
                                              n_iters=self.n_ot_train, step_size=self.step_size)
-
 
         # Eq (7)
 
@@ -165,7 +170,7 @@ class AlignNet(LightningModule):
     #     loss = 0.
 
     #     for a_emb, a_idx, a_len, b_emb, b_idx, b_len in zip(a_embs.unsqueeze(1), a_steps, a_seq_len, b_embs.unsqueeze(1), b_steps, b_seq_len):
-            
+
     #         loss += self.lav_loss(a_emb, b_emb, a_idx, b_idx, a_len, b_len, logger=self.logger)
 
     #     loss = loss / self.batch_size
@@ -175,7 +180,7 @@ class AlignNet(LightningModule):
     #     return {'val_loss': loss, 'log': tensorboard_logs}
 
     # def validation_epoch_end(self, outputs):
-        
+
     #     avg_loss = torch.stack([x['val_loss'] for x in outputs]).mean()
     #     tensorboard_logs = {}
 
@@ -183,9 +188,9 @@ class AlignNet(LightningModule):
     #         for k in x['log']:
     #             if k not in tensorboard_logs:
     #                 tensorboard_logs[k] = []
-                
+
     #             tensorboard_logs[k].append(x['log'][k])
-        
+
     #     for k, losses in tensorboard_logs.items():
     #         tensorboard_logs[k] = torch.stack(losses).mean()
 
@@ -216,7 +221,7 @@ class AlignNet(LightningModule):
     #     data_loader = DataLoader(data, batch_size=self.batch_size, shuffle=True, pin_memory=True,
     #                                     num_workers=config.DATA.WORKERS)
 
-    #     return data_loader    
+    #     return data_loader
 
     # def test_step(self, batch, batch_idx):
     #     return self.validation_step(batch, batch_idx)
@@ -226,11 +231,10 @@ class AlignNet(LightningModule):
 
 
 def main(hparams):
-    
     seed_everything(hparams.SEED)
 
     model = AlignNet(hparams)
-    
+
     # dd_backend = None
     # if hparams.GPUS < 0 or hparams.GPUS > 1:
     #     model = nn.SyncBatchNorm.convert_sync_batchnorm(model)
@@ -245,7 +249,7 @@ def main(hparams):
                           deterministic=True, callbacks=[checkpoint_callback], 
                           limit_val_batches=0, check_val_every_n_epoch=0, num_sanity_val_steps=0,
                           logger=csv_logger, log_every_n_steps=5)
- 
+
         trainer.fit(model)
         #  distributed_backend=dd_backend, row_log_interval=10 limit_val_batches=hparams.TRAIN.VAL_PERCENT
     except KeyboardInterrupt:
@@ -259,12 +263,13 @@ def main(hparams):
         #                                                                                     hparams.TRAIN.LR,
         #                                                                                     hparams.TRAIN.BATCH_SIZE)))
         trainer.save_checkpoint(os.path.join(hparams.ROOT, 'final_model_l2norm-{}'
-                                                                '_sigma-{}_alpha-{}'
-                                                                '_lr-{}_bs-{}.pth'.format(hparams.LOSSES.L2_NORMALIZE,
-                                                                                            hparams.LOSSES.SIGMA,
-                                                                                            hparams.LOSSES.ALPHA,
-                                                                                            hparams.TRAIN.LR,
-                                                                                            hparams.TRAIN.BATCH_SIZE)))
+                                                           '_sigma-{}_alpha-{}'
+                                                           '_lr-{}_bs-{}.pth'.format(hparams.LOSSES.L2_NORMALIZE,
+                                                                                     hparams.LOSSES.SIGMA,
+                                                                                     hparams.LOSSES.ALPHA,
+                                                                                     hparams.TRAIN.LR,
+                                                                                     hparams.TRAIN.BATCH_SIZE)))
+
 
 if __name__ == '__main__':
 
@@ -277,25 +282,40 @@ if __name__ == '__main__':
     parser.add_argument('--workers', type=int, default=10)
     ###############
     # ASOT args:
-    parser.add_argument('--alpha-train', '-at', type=float, default=0.5, help='weighting of KOT term on frame features in OT') #original 0.3, changed 0.5
-    parser.add_argument('--alpha-eval', '-ae', type=float, default=0.6, help='weighting of KOT term on frame features in OT')
-    parser.add_argument('--n-ot-train', '-nt', type=int, nargs='+', default=[25, 1], help='number of outer and inner iterations for ASOT solver (train)')
-    parser.add_argument('--n-ot-eval', '-no', type=int, nargs='+', default=[25, 1], help='number of outer and inner iterations for ASOT solver (eval)')
-    parser.add_argument('--step-size', '-ss', type=float, default=None, help='Step size/learning rate for ASOT solver. Worth setting manually if ub-frames && ub-actions')
-    parser.add_argument('--eps-train', '-et', type=float, default=0.065, help='entropy regularization for OT during training') #original 0.07, changed 0.065
-    parser.add_argument('--eps-eval', '-ee', type=float, default=0.04, help='entropy regularization for OT during val/test')
+    parser.add_argument('--alpha-train', '-at', type=float, default=0.3,
+                        help='weighting of KOT term on frame features in OT')  # original 0.3, changed 0.5
+    parser.add_argument('--alpha-eval', '-ae', type=float, default=0.6,
+                        help='weighting of KOT term on frame features in OT')
+    parser.add_argument('--n-ot-train', '-nt', type=int, nargs='+', default=[25, 1],
+                        help='number of outer and inner iterations for ASOT solver (train)')
+    parser.add_argument('--n-ot-eval', '-no', type=int, nargs='+', default=[25, 1],
+                        help='number of outer and inner iterations for ASOT solver (eval)')
+    parser.add_argument('--step-size', '-ss', type=float, default=None,
+                        help='Step size/learning rate for ASOT solver. Worth setting manually if ub-frames && ub-actions')
+    parser.add_argument('--eps-train', '-et', type=float, default=0.065,
+                        help='entropy regularization for OT during training')  # original 0.07, changed 0.065
+    parser.add_argument('--eps-eval', '-ee', type=float, default=0.04,
+                        help='entropy regularization for OT during val/test')
     # default=0.04 in ASOT but replaced with 0.02 since thats what we used in the command for VAOT
-    parser.add_argument('--radius-gw', '-r', type=float, default=0.02, help='Radius parameter for GW structure loss') #original 0.02
-    parser.add_argument('--ub-frames', '-uf', action='store_true', help='relaxes balanced assignment assumption over frames, i.e., each frame is assigned')
-    parser.add_argument('--ub-actions', '-ua', action='store_true', help='relaxes balanced assignment assumption over actions, i.e., each action is uniformly represented in a video')
-    parser.add_argument('--lambda-frames-train', '-lft', type=float, default=0.05, help='penalty on balanced frames assumption for training') #original 0.05
-    parser.add_argument('--lambda-actions-train', '-lat', type=float, default=0.05, help='penalty on balanced actions assumption for training') #original 0.05
-    parser.add_argument('--lambda-frames-eval', '-lfe', type=float, default=0.05, help='penalty on balanced frames assumption for test')
-    parser.add_argument('--lambda-actions-eval', '-lae', type=float, default=0.01, help='penalty on balanced actions assumption for test')
+    parser.add_argument('--radius-gw', '-r', type=float, default=0.02,
+                        help='Radius parameter for GW structure loss')  # original 0.02
+    parser.add_argument('--ub-frames', '-uf', action='store_true',
+                        help='relaxes balanced assignment assumption over frames, i.e., each frame is assigned')
+    parser.add_argument('--ub-actions', '-ua', action='store_true',
+                        help='relaxes balanced assignment assumption over actions, i.e., each action is uniformly represented in a video')
+    parser.add_argument('--lambda-frames-train', '-lft', type=float, default=0.05,
+                        help='penalty on balanced frames assumption for training')  # original 0.05
+    parser.add_argument('--lambda-actions-train', '-lat', type=float, default=0.05,
+                        help='penalty on balanced actions assumption for training')  # original 0.05
+    parser.add_argument('--lambda-frames-eval', '-lfe', type=float, default=0.05,
+                        help='penalty on balanced frames assumption for test')
+    parser.add_argument('--lambda-actions-eval', '-lae', type=float, default=0.01,
+                        help='penalty on balanced actions assumption for test')
     # default=0.1 in ASOT but replaced with 0.25 since thats what we used in the command for VAOT
-    parser.add_argument('--rho', type=float, default=0.2, help='Factor for global structure weighting term') #original was 0.25, 0.2 yield better results
-    ############### 
-    
+    parser.add_argument('--rho', type=float, default=0.2,
+                        help='Factor for global structure weighting term')  # original was 0.25, 0.2 yield better results
+    ###############
+
     args = parser.parse_args()
 
     CONFIG.GPUS = args.gpus
