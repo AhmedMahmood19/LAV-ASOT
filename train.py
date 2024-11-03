@@ -1,3 +1,4 @@
+from sklearn.cluster import KMeans
 import torch
 import torch.nn as nn
 import torch.optim as optim
@@ -238,7 +239,48 @@ class AlignNet(LightningModule):
 
         return data_loader 
 
+    def fit_clusters(self, dataloader, K):
+        with torch.no_grad():
+            features_full = []
+            self.base_cnn.eval()
+            self.emb.eval()
+            for (a_X, _, _, _, _), (_, _, _, _, _) in dataloader:
+                
+                # Pass through the encoder to produce framewise embeddings, the encoder stacks context frames so it outputs less no. of embeddings than the no. of input frames
+                # features is a tensor of shape (batchsize=1, 20, embeddingsize=128) representing the 20 framewise embeddings
+                features = self.forward(a_X)
 
+                features_full.append(features)
+            features_full = torch.cat(features_full, dim=0).reshape(-1, features.shape[2]).cpu().numpy()
+            kmeans = KMeans(n_clusters=K).fit(features_full)
+            self.base_cnn.train()
+            self.emb.train()
+        self.clusters.data = torch.from_numpy(kmeans.cluster_centers_).to(self.clusters.device)
+        return None
+
+
+    # def fit_clusters(self, dataloader, K):
+    #     with torch.no_grad():
+    #         features_full = []
+    #         # Set the encoder to eval mode
+    #         self.mlp.eval()
+    #         # Iterate through the whole training dataset, B=batch size, T=num of frames in a batch, D=embedding size, 
+    #         # create features from features_raw same as we did in training step
+    #         # So we could replace all of that with how we get features in our training step
+    #         # Finally append it to the list features_full 
+    #         for features_raw, _, _, _, _ in dataloader:
+    #             B, T, _ = features_raw.shape
+    #             D = self.layer_sizes[-1]
+    #             features = F.normalize(self.mlp(features_raw.reshape(-1, features_raw.shape[-1])).reshape(B, T, D), dim=-1)
+    #             features_full.append(features)
+    #         # Prolly dont need to change this stuff
+    #         features_full = torch.cat(features_full, dim=0).reshape(-1, features.shape[2]).cpu().numpy()
+    #         kmeans = KMeans(n_clusters=K).fit(features_full)
+    #         # Set the encoder to train mode
+    #         self.mlp.train()
+    #     # Store the kmeans clusters
+    #     self.clusters.data = torch.from_numpy(kmeans.cluster_centers_).to(self.clusters.device)
+    #     return None
 
 def main(hparams):
     seed_everything(hparams.SEED)
