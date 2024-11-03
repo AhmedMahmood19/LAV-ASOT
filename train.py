@@ -78,6 +78,11 @@ class AlignNet(LightningModule):
         self.lambda_actions_eval = config.LAMBDA_ACTIONS_EVAL
         self.rho = config.RHO
         self.temp = 0.1
+        self.n_clusters = config.N_CLUSTERS
+        
+        # initialize cluster centers/codebook
+        d = config.DTWALIGNMENT.EMBEDDING_SIZE
+        self.clusters = nn.parameter.Parameter(data=F.normalize(torch.randn(self.n_clusters, d), dim=-1), requires_grad=True)
         ##########################
 
     def train(self, mode=True):
@@ -250,6 +255,12 @@ def main(hparams):
                           limit_val_batches=0, check_val_every_n_epoch=0, num_sanity_val_steps=0,
                           logger=csv_logger, log_every_n_steps=5)
 
+        # # Assuming training will never start from a ckpt and will always start from a fresh model, we can use kmeans to initialize the clusters
+        # if hparams.k_means:
+        #     # Get the train data loader
+        #     train_loader = model.train_dataloader()
+        #     model.fit_clusters(train_loader, hparams.n_clusters)
+
         trainer.fit(model)
 
     except KeyboardInterrupt:
@@ -290,7 +301,6 @@ if __name__ == '__main__':
                         help='entropy regularization for OT during training')  # original 0.07, changed 0.065
     parser.add_argument('--eps-eval', '-ee', type=float, default=0.04,
                         help='entropy regularization for OT during val/test')
-    # default=0.04 in ASOT but replaced with 0.02 since thats what we used in the command for VAOT
     parser.add_argument('--radius-gw', '-r', type=float, default=0.02,
                         help='Radius parameter for GW structure loss')  # original 0.02
     parser.add_argument('--ub-frames', '-uf', action='store_true',
@@ -305,9 +315,14 @@ if __name__ == '__main__':
                         help='penalty on balanced frames assumption for test')
     parser.add_argument('--lambda-actions-eval', '-lae', type=float, default=0.01,
                         help='penalty on balanced actions assumption for test')
-    # default=0.1 in ASOT but replaced with 0.25 since thats what we used in the command for VAOT
     parser.add_argument('--rho', type=float, default=0.2,
                         help='Factor for global structure weighting term')  # original was 0.25, 0.2 yield better results
+    parser.add_argument('--k-means', '-km', action='store_false',
+                        help='do not initialize clusters with kmeans default = True')
+    parser.add_argument('--n-clusters', '-c', type=int, default=8,
+                        help='number of actions/clusters')
+    parser.add_argument('--beta', '-b', type=float, default=1,
+                        help='the weight used when combining alignment and segmentation losses')
     ###############
 
     args = parser.parse_args()
@@ -351,7 +366,13 @@ if __name__ == '__main__':
         CONFIG.LAMBDA_ACTIONS_EVAL = args.lambda_actions_eval
     if args.rho:
         CONFIG.RHO = args.rho
-    # NOTE: the default values of these args, cause the if condition to fail so we wont use the if condition for them
+    if args.k_means:
+        CONFIG.K_MEANS = args.k_means
+    if args.n_clusters:
+        CONFIG.N_CLUSTERS = args.n_clusters
+    if args.beta:
+        CONFIG.BETA = args.beta
+    # NOTE: the default values of these args cause the if condition to fail, so we wont use the if condition for them
     CONFIG.STEP_SIZE = args.step_size
     CONFIG.UB_FRAMES = args.ub_frames
     CONFIG.UB_ACTIONS = args.ub_actions
