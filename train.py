@@ -80,6 +80,7 @@ class AlignNet(LightningModule):
         self.rho = config.RHO
         self.temp = 0.1
         self.n_clusters = config.N_CLUSTERS
+        self.beta = config.BETA
         
         # initialize cluster centers/codebook
         d = config.DTWALIGNMENT.EMBEDDING_SIZE
@@ -244,10 +245,7 @@ class AlignNet(LightningModule):
             features_full = []
             self.base_cnn.eval()
             self.emb.eval()
-            for (a_X, _, _, _, _), (_, _, _, _, _) in dataloader:
-                
-                # Pass through the encoder to produce framewise embeddings, the encoder stacks context frames so it outputs less no. of embeddings than the no. of input frames
-                # features is a tensor of shape (batchsize=1, 20, embeddingsize=128) representing the 20 framewise embeddings
+            for (a_X, a_name, _, _, _), (_, _, _, _, _) in dataloader:
                 features = self.forward(a_X)
 
                 features_full.append(features)
@@ -259,28 +257,6 @@ class AlignNet(LightningModule):
         return None
 
 
-    # def fit_clusters(self, dataloader, K):
-    #     with torch.no_grad():
-    #         features_full = []
-    #         # Set the encoder to eval mode
-    #         self.mlp.eval()
-    #         # Iterate through the whole training dataset, B=batch size, T=num of frames in a batch, D=embedding size, 
-    #         # create features from features_raw same as we did in training step
-    #         # So we could replace all of that with how we get features in our training step
-    #         # Finally append it to the list features_full 
-    #         for features_raw, _, _, _, _ in dataloader:
-    #             B, T, _ = features_raw.shape
-    #             D = self.layer_sizes[-1]
-    #             features = F.normalize(self.mlp(features_raw.reshape(-1, features_raw.shape[-1])).reshape(B, T, D), dim=-1)
-    #             features_full.append(features)
-    #         # Prolly dont need to change this stuff
-    #         features_full = torch.cat(features_full, dim=0).reshape(-1, features.shape[2]).cpu().numpy()
-    #         kmeans = KMeans(n_clusters=K).fit(features_full)
-    #         # Set the encoder to train mode
-    #         self.mlp.train()
-    #     # Store the kmeans clusters
-    #     self.clusters.data = torch.from_numpy(kmeans.cluster_centers_).to(self.clusters.device)
-    #     return None
 
 def main(hparams):
     seed_everything(hparams.SEED)
@@ -297,11 +273,11 @@ def main(hparams):
                           limit_val_batches=0, check_val_every_n_epoch=0, num_sanity_val_steps=0,
                           logger=csv_logger, log_every_n_steps=5)
 
-        # # Assuming training will never start from a ckpt and will always start from a fresh model, we can use kmeans to initialize the clusters
-        # if hparams.k_means:
-        #     # Get the train data loader
-        #     train_loader = model.train_dataloader()
-        #     model.fit_clusters(train_loader, hparams.n_clusters)
+        # Assuming training will never start from a ckpt and will always start from a fresh model, we can use kmeans to initialize the clusters
+        if hparams.K_MEANS:
+            # Get the train data loader specifically for fit_clusters()
+            train_loader = model.train_dataloader()
+            model.fit_clusters(train_loader, hparams.N_CLUSTERS)
 
         trainer.fit(model)
 
@@ -361,9 +337,9 @@ if __name__ == '__main__':
                         help='Factor for global structure weighting term')  # original was 0.25, 0.2 yield better results
     parser.add_argument('--k-means', '-km', action='store_false',
                         help='do not initialize clusters with kmeans default = True')
-    parser.add_argument('--n-clusters', '-c', type=int, default=8,
+    parser.add_argument('--n-clusters', '-c', type=int, default=5,
                         help='number of actions/clusters')
-    parser.add_argument('--beta', '-b', type=float, default=1,
+    parser.add_argument('--beta', '-b', type=float, default=1.0,
                         help='the weight used when combining alignment and segmentation losses')
     ###############
 
@@ -408,13 +384,12 @@ if __name__ == '__main__':
         CONFIG.LAMBDA_ACTIONS_EVAL = args.lambda_actions_eval
     if args.rho:
         CONFIG.RHO = args.rho
-    if args.k_means:
-        CONFIG.K_MEANS = args.k_means
     if args.n_clusters:
         CONFIG.N_CLUSTERS = args.n_clusters
     if args.beta:
         CONFIG.BETA = args.beta
     # NOTE: the default values of these args cause the if condition to fail, so we wont use the if condition for them
+    CONFIG.K_MEANS = args.k_means
     CONFIG.STEP_SIZE = args.step_size
     CONFIG.UB_FRAMES = args.ub_frames
     CONFIG.UB_ACTIONS = args.ub_actions
