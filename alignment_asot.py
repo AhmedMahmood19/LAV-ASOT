@@ -176,9 +176,10 @@ def asot_objective(T, cost_matrix, eps, alpha, radius, ub_frames, ub_actions,
 
 # ASOT solver
 
-def segment_asot(cost_matrix, mask_X=None, mask_Y=None, eps=0.07, alpha=0.3, radius=0.04, ub_frames=False,
-                 ub_actions=True, lambda_frames=0.1, lambda_actions=0.05, n_iters=(25, 1),
-                 stable_thres=7., step_size=None):
+def segment_asot(cost_matrix, mask_X=None, mask_Y=None,
+                 eps=0.07, alpha=0.3, radius=0.04, ub_frames=False,
+                 ub_actions=True, lambda_frames=0.1, lambda_actions=0.05,
+                 n_iters=(25, 1), stable_thres=7., step_size=None):
 
     # print(lambda_frames)
     # Get the device of this tensor

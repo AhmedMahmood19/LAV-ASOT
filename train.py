@@ -4,7 +4,7 @@ import torch.optim as optim
 import torch.nn.functional as F
 from torch.utils.data import DataLoader
 import losses
-import asot
+import alignment_asot, segmentation_asot
 
 import os
 import numpy as np
@@ -114,6 +114,60 @@ class AlignNet(LightningModule):
         T_X = features_X.shape[1]
         T_Y = features_Y.shape[1]
         mask_X, mask_Y = a_mask, b_mask
+
+
+
+#######################START SEGMENTATION####################################
+        with torch.no_grad():
+            self.clusters.data = F.normalize(self.clusters.data, dim=-1)
+
+##FIND SEGMENTATION LOSS FOR X        
+        codes_segmentation_X = torch.exp(features_X @ self.clusters.T[None, ...] / self.temp)
+        codes_segmentation_X = codes_segmentation_X / codes_segmentation_X.sum(dim=-1, keepdim=True)
+        
+        
+        with torch.no_grad():  # pseudo-labels from OT
+            temp_prior_segmentation_X = segmentation_asot.temporal_prior(T_X, self.n_clusters, self.rho, features_X.device)
+            cost_matrix_segmentation_X = 1. - features_X @ self.clusters.T.unsqueeze(0)
+            cost_matrix_segmentation_X += temp_prior_segmentation_X
+            opt_codes_segmentation_X, _ = segmentation_asot.segment_asot(cost_matrix_segmentation_X, mask_X,
+                                                                         eps=self.train_eps, alpha=self.alpha_train, radius=self.radius_gw, 
+                                                                         ub_frames=self.ub_frames, ub_actions=self.ub_actions, 
+                                                                         lambda_frames=self.lambda_frames_train, 
+                                                                         lambda_actions=self.lambda_actions_train, 
+                                                                         n_iters=self.n_ot_train, step_size=self.step_size)
+
+        
+        loss_ce_segmentation_X = -((opt_codes_segmentation_X * torch.log(codes_segmentation_X + num_eps)) * mask_X[..., None]).sum(dim=2).mean()
+        self.log('train_loss_segmentation_X', loss_ce_segmentation_X)
+    
+##FIND SEGMENTATION LOSS FOR Y        
+        codes_segmentation_Y = torch.exp(features_Y @ self.clusters.T[None, ...] / self.temp)
+        codes_segmentation_Y = codes_segmentation_Y / codes_segmentation_Y.sum(dim=-1, keepdim=True)
+        
+        
+        with torch.no_grad():  # pseudo-labels from OT
+            temp_prior_segmentation_Y = segmentation_asot.temporal_prior(T_Y, self.n_clusters, self.rho, features_Y.device)
+            cost_matrix_segmentation_Y = 1. - features_Y @ self.clusters.T.unsqueeze(0)
+            cost_matrix_segmentation_Y += temp_prior_segmentation_Y
+            opt_codes_segmentation_Y, _ = segmentation_asot.segment_asot(cost_matrix_segmentation_Y, mask_Y, 
+                                                                         eps=self.train_eps, alpha=self.alpha_train, radius=self.radius_gw,
+                                                                         ub_frames=self.ub_frames, ub_actions=self.ub_actions,
+                                                                         lambda_frames=self.lambda_frames_train,
+                                                                         lambda_actions=self.lambda_actions_train,
+                                                                         n_iters=self.n_ot_train, step_size=self.step_size)
+
+        
+        loss_ce_segmentation_Y = -((opt_codes_segmentation_Y * torch.log(codes_segmentation_Y + num_eps)) * mask_Y[..., None]).sum(dim=2).mean()
+        self.log('train_loss_segmentation_Y', loss_ce_segmentation_Y)
+
+##TOTAL SEGMENTATION LOSS
+        loss_ce_segmentation = loss_ce_segmentation_X + loss_ce_segmentation_Y
+
+#######################END SEGMENTATION######################################
+
+
+
         # Eq (6)
         # codes represent a matrix P for each batch element
         # size of a matrix P is (no. of frames in X x no. of frames in Y)
@@ -125,7 +179,7 @@ class AlignNet(LightningModule):
         with torch.no_grad():
             # Calculate the KOT cost matrix from the paragraph above Eq (7)
             # ρR = rho * Temporal prior
-            temp_prior = asot.temporal_prior(T_X, T_Y, self.rho, features_X.device)
+            temp_prior = alignment_asot.temporal_prior(T_X, T_Y, self.rho, features_X.device)
             # Cost Matrix Ck from section 4.2, no need to divide by norms since both vectors were previously normalized with F.normalize()
             cost_matrix = 1. - features_X @ features_Y.transpose(1, 2)
             # Ĉk = Ck + ρR
@@ -146,7 +200,7 @@ class AlignNet(LightningModule):
             # Tb are the (soft) pseudo-labels defined above Eq (7)
             # Tb_ij represents the prob. of the frame_i in X being aligned with the frame_j in Y
 
-            opt_codes, _ = asot.segment_asot(cost_matrix=cost_matrix, mask_X=mask_X, mask_Y=mask_Y,
+            opt_codes, _ = alignment_asot.segment_asot(cost_matrix=cost_matrix, mask_X=mask_X, mask_Y=mask_Y,
                                              eps=self.train_eps, alpha=self.alpha_train, radius=self.radius_gw,
                                              ub_frames=self.ub_frames, ub_actions=self.ub_actions,
                                              lambda_frames=self.lambda_frames_train,
@@ -154,47 +208,14 @@ class AlignNet(LightningModule):
                                              n_iters=self.n_ot_train, step_size=self.step_size)
 
         # Eq (7)
+        loss_ce_alignment = -((opt_codes * torch.log(codes + num_eps)) * mask_X.unsqueeze(2) * mask_Y.unsqueeze(1)).sum(dim=2).mean()
+        self.log('train_loss_alignment', loss_ce_alignment)
 
-        loss_ce = -((opt_codes * torch.log(codes + num_eps)) * mask_X.unsqueeze(2) * mask_Y.unsqueeze(1)).sum(dim=2).mean()
-        self.log('train_loss', loss_ce)
-        return loss_ce
+        # Weighted sum of the segmentation and alignment losses
+        total_loss_ce = (self.beta * loss_ce_segmentation) + loss_ce_alignment
+        self.log('train_loss', total_loss_ce)
 
-    # def validation_step(self, batch, batch_idx):
-
-    #     (a_X, _, a_steps, a_seq_len), (b_X, _, b_steps, b_seq_len) = batch
-
-    #     X = torch.cat([a_X, b_X])
-    #     embs = self.forward(X)
-    #     a_embs, b_embs = torch.split(embs, a_X.size(0), dim=0)
-
-    #     loss = 0.
-
-    #     for a_emb, a_idx, a_len, b_emb, b_idx, b_len in zip(a_embs.unsqueeze(1), a_steps, a_seq_len, b_embs.unsqueeze(1), b_steps, b_seq_len):
-
-    #         loss += self.lav_loss(a_emb, b_emb, a_idx, b_idx, a_len, b_len, logger=self.logger)
-
-    #     loss = loss / self.batch_size
-
-    #     tensorboard_logs = {'val_loss': loss}
-
-    #     return {'val_loss': loss, 'log': tensorboard_logs}
-
-    # def validation_epoch_end(self, outputs):
-
-    #     avg_loss = torch.stack([x['val_loss'] for x in outputs]).mean()
-    #     tensorboard_logs = {}
-
-    #     for x in outputs:
-    #         for k in x['log']:
-    #             if k not in tensorboard_logs:
-    #                 tensorboard_logs[k] = []
-
-    #             tensorboard_logs[k].append(x['log'][k])
-
-    #     for k, losses in tensorboard_logs.items():
-    #         tensorboard_logs[k] = torch.stack(losses).mean()
-
-    #     return {'val_loss': avg_loss, 'log': tensorboard_logs}
+        return total_loss_ce
 
     def configure_optimizers(self):
 
@@ -212,33 +233,12 @@ class AlignNet(LightningModule):
 
         return data_loader 
 
-    # def val_dataloader(self):
-    #     config = self.hparams.config
-    #     val_path = os.path.join(self.data_path, 'val')
-
-    #     val_transforms = utils.get_transforms(augment=False)
-    #     data = align_dataset.AlignData(val_path, config.EVAL.NUM_FRAMES, config.DATA, transform=val_transforms, flatten=False)
-    #     data_loader = DataLoader(data, batch_size=self.batch_size, shuffle=True, pin_memory=True,
-    #                                     num_workers=config.DATA.WORKERS)
-
-    #     return data_loader
-
-    # def test_step(self, batch, batch_idx):
-    #     return self.validation_step(batch, batch_idx)
-
-    # def test_epoch_end(self, outputs):
-    #     return self.validation_epoch_end(outputs)
 
 
 def main(hparams):
     seed_everything(hparams.SEED)
 
     model = AlignNet(hparams)
-
-    # dd_backend = None
-    # if hparams.GPUS < 0 or hparams.GPUS > 1:
-    #     model = nn.SyncBatchNorm.convert_sync_batchnorm(model)
-    #     dd_backend = 'ddp'
 
     try:
 
@@ -251,17 +251,11 @@ def main(hparams):
                           logger=csv_logger, log_every_n_steps=5)
 
         trainer.fit(model)
-        #  distributed_backend=dd_backend, row_log_interval=10 limit_val_batches=hparams.TRAIN.VAL_PERCENT
+
     except KeyboardInterrupt:
         pass
-    finally:
-        # trainer.save_checkpoint(os.path.join(os.path.join(hparams.CKPT_PATH, 'STEPS'), 'final_model_l2norm-{}'
-        #                                                         '_sigma-{}_alpha-{}'
-        #                                                         '_lr-{}_bs-{}.pth'.format(hparams.LOSSES.L2_NORMALIZE,
-        #                                                                                     hparams.LOSSES.SIGMA,
-        #                                                                                     hparams.LOSSES.ALPHA,
-        #                                                                                     hparams.TRAIN.LR,
-        #                                                                                     hparams.TRAIN.BATCH_SIZE)))
+
+    finally: 
         trainer.save_checkpoint(os.path.join(hparams.ROOT, 'final_model_l2norm-{}'
                                                            '_sigma-{}_alpha-{}'
                                                            '_lr-{}_bs-{}.pth'.format(hparams.LOSSES.L2_NORMALIZE,
