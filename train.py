@@ -315,7 +315,7 @@ if __name__ == '__main__':
                         help='number of outer and inner iterations for ASOT solver (eval)')
     parser.add_argument('--step-size', '-ss', type=float, default=None,
                         help='Step size/learning rate for ASOT solver. Worth setting manually if ub-frames && ub-actions')
-    parser.add_argument('--eps-train', '-et', type=float, default=0.065,
+    parser.add_argument('--eps-train', '-et', type=float, default=0.07,
                         help='entropy regularization for OT during training')  # original 0.07, changed 0.065
     parser.add_argument('--eps-eval', '-ee', type=float, default=0.04,
                         help='entropy regularization for OT during val/test')
@@ -333,13 +333,13 @@ if __name__ == '__main__':
                         help='penalty on balanced frames assumption for test')
     parser.add_argument('--lambda-actions-eval', '-lae', type=float, default=0.01,
                         help='penalty on balanced actions assumption for test')
-    parser.add_argument('--rho', type=float, default=0.2,
+    parser.add_argument('--rho', type=float, default=0.35,
                         help='Factor for global structure weighting term')  # original was 0.25, 0.2 yield better results
     parser.add_argument('--k-means', '-km', action='store_false',
                         help='do not initialize clusters with kmeans default = True')
     parser.add_argument('--n-clusters', '-c', type=int, default=5,
                         help='number of actions/clusters')
-    parser.add_argument('--beta', '-b', type=float, default=1.0,
+    parser.add_argument('--beta', '-b', type=float, default=10,
                         help='the weight used when combining alignment and segmentation losses')
     ###############
 

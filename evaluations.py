@@ -106,12 +106,12 @@ def main(ckpts, args):
             data_path = args.data_path
         else:
             data_path = CONFIG.DATA_PATH
-        data_path = './Data_Test/'
+        data_path = './Data_Test2/'
         
         train_path = os.path.join(data_path, 'Test')
         val_path = os.path.join(data_path, 'Test')
-        lab_name = "kallax_shelf_drawer" + "_val"
-        labels = np.load(f"./npyrecords2/{lab_name}.npy", allow_pickle=True).item()
+        lab_name = "pouring" + "_val"
+        labels = np.load(f"./npyrecords/{lab_name}.npy", allow_pickle=True).item()
 
         # create dataset
         _transforms = utils.get_transforms(augment=False)
