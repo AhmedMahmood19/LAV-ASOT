@@ -65,7 +65,9 @@ CONFIG.DATA.NUM_PREFETCH_BATCHES = 1
 CONFIG.DATA.RANDOM_OFFSET = 1
 CONFIG.DATA.FRAME_STRIDE = 16
 CONFIG.DATA.SAMPLING_STRATEGY = 'segment_uniform'  # offset_uniform, stride, all, segment_uniform
-CONFIG.DATA.NUM_CONTEXT = 2  # number of frames that will be embedded jointly,
+
+#Assuming NUM_CONTEXT=1 means no context frames and only the frame itself
+CONFIG.DATA.NUM_CONTEXT = 1  # number of frames that will be embedded jointly,
 CONFIG.DATA.CONTEXT_STRIDE = 15  # stride between context frames
 
 CONFIG.DATA.FRAME_LABELS = True

@@ -4,7 +4,8 @@ import torch.nn as nn
 import torch.optim as optim
 import torch.nn.functional as F
 from torch.utils.data import DataLoader
-import losses
+from transformer import TransformerModel
+from carlutils.parser import load_config
 import alignment_asot, segmentation_asot
 
 import os
@@ -30,20 +31,23 @@ class AlignNet(LightningModule):
     def __init__(self, config):
         super(AlignNet, self).__init__()
 
-        self.base_cnn = BaseModel(pretrained=True)
+        self.cfg = load_config(yaml_file='carlutils/scl_transformer_config.yml')
+        self.model = TransformerModel(self.cfg)
 
-        if config.TRAIN.FREEZE_BASE:
-            if config.TRAIN.FREEZE_BN_ONLY:
-                utils.freeze_bn_only(module=self.base_cnn)
-            else:
-                utils.freeze(module=self.base_cnn, train_bn=False)
+        # self.base_cnn = BaseModel(pretrained=True)
 
-        self.emb = ConvEmbedder(emb_size=config.DTWALIGNMENT.EMBEDDING_SIZE, l2_normalize=config.LOSSES.L2_NORMALIZE)
+        # if config.TRAIN.FREEZE_BASE:
+        #     if config.TRAIN.FREEZE_BN_ONLY:
+        #         utils.freeze_bn_only(module=self.base_cnn)
+        #     else:
+        #         utils.freeze(module=self.base_cnn, train_bn=False)
 
-        self.lav_loss = losses.LAV(alpha=config.LOSSES.ALPHA, sigma=config.LOSSES.SIGMA,
-                                   margin=config.LOSSES.IDM_IDX_MARGIN,
-                                   num_frames=config.TRAIN.NUM_FRAMES, dtw_gamma=config.DTWALIGNMENT.SDTW_GAMMA,
-                                   dtw_normalize=config.DTWALIGNMENT.SDTW_NORMALIZE, debug=False)
+        # self.emb = ConvEmbedder(emb_size=config.DTWALIGNMENT.EMBEDDING_SIZE, l2_normalize=config.LOSSES.L2_NORMALIZE)
+
+        # self.lav_loss = losses.LAV(alpha=config.LOSSES.ALPHA, sigma=config.LOSSES.SIGMA,
+        #                            margin=config.LOSSES.IDM_IDX_MARGIN,
+        #                            num_frames=config.TRAIN.NUM_FRAMES, dtw_gamma=config.DTWALIGNMENT.SDTW_GAMMA,
+        #                            dtw_normalize=config.DTWALIGNMENT.SDTW_NORMALIZE, debug=False)
 
         # params
         self.l2_normalize = config.LOSSES.L2_NORMALIZE
@@ -90,19 +94,21 @@ class AlignNet(LightningModule):
     def train(self, mode=True):
         super(AlignNet, self).train(mode=mode)
 
-        if self.freeze_base:
-            if self.freeze_bn_only:
-                utils.freeze_bn_only(module=self.base_cnn)
-            else:
-                utils.freeze(module=self.base_cnn, train_bn=False)
+        # if self.freeze_base:
+        #     if self.freeze_bn_only:
+        #         utils.freeze_bn_only(module=self.base_cnn)
+        #     else:
+        #         utils.freeze(module=self.base_cnn, train_bn=False)
 
-    def forward(self, x):
-        num_ctxt = self.hparams.config.DATA.NUM_CONTEXT
+    # def forward(self, x):
+        # num_ctxt = self.hparams.config.DATA.NUM_CONTEXT
+        # num_frames = x.size(1) // num_ctxt
+        # x = self.base_cnn(x)
+        # x = self.emb(x, num_frames)
+        # return x
 
-        num_frames = x.size(1) // num_ctxt
-        x = self.base_cnn(x)
-        x = self.emb(x, num_frames)
-        return x
+    def forward(self, x, masks):
+        return self.model(x, video_masks=masks, project=self.cfg.MODEL.PROJECTION)
 
     def training_step(self, batch, batch_idx):
         # Read AlignData's __getitem__() to understand what is returned in the batch
@@ -111,8 +117,11 @@ class AlignNet(LightningModule):
 
         # Concatenate the tensors along the batch dimension
         X = torch.cat([a_X, b_X])
-        # Pass through the encoder to produce framewise embeddings, the encoder stacks context frames so it outputs less no. of embeddings than the no. of input frames
-        embs = self.forward(X)
+        # Concatenate the masks
+        masks = torch.stack([a_mask, b_mask], dim=0)
+        # Pass to the encoder to produce framewise embeddings
+        embs = self.forward(X, masks)
+
         # a_embs/b_embs is a tensor of shape (batchsize=1, 20, embeddingsize=128) representing the 20 framewise embeddings
         a_embs, b_embs = torch.split(embs, a_X.size(0), dim=0)
 
@@ -243,16 +252,18 @@ class AlignNet(LightningModule):
     def fit_clusters(self, dataloader, K):
         with torch.no_grad():
             features_full = []
-            self.base_cnn.eval()
-            self.emb.eval()
-            for (a_X, a_name, _, _, _), (_, _, _, _, _) in dataloader:
-                features = self.forward(a_X)
+            # self.base_cnn.eval()
+            # self.emb.eval()
+            self.model.eval()
+            for (a_X, _, _, _, a_mask), (_, _, _, _, _) in dataloader:
+                features = self.forward(a_X, a_mask)
 
                 features_full.append(features)
             features_full = torch.cat(features_full, dim=0).reshape(-1, features.shape[2]).cpu().numpy()
             kmeans = KMeans(n_clusters=K).fit(features_full)
-            self.base_cnn.train()
-            self.emb.train()
+            # self.base_cnn.train()
+            # self.emb.train()
+            self.model.train()
         self.clusters.data = torch.from_numpy(kmeans.cluster_centers_).to(self.clusters.device)
         return None
 
