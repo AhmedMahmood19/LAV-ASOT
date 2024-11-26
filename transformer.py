@@ -254,7 +254,8 @@ class TransformerEmbModel(nn.Module):
         fc_params = cfg.MODEL.EMBEDDER_MODEL.FC_LAYERS
         self.embedding_size = cfg.MODEL.EMBEDDER_MODEL.EMBEDDING_SIZE
         hidden_channels = cfg.MODEL.EMBEDDER_MODEL.HIDDEN_SIZE
-        self.pooling = nn.AdaptiveMaxPool2d(1)
+        # self.pooling = nn.AdaptiveMaxPool2d(1)
+        self.pooling = nn.AdaptiveAvgPool2d(1)
         
         self.fc_layers = []
         for channels, activate in fc_params:
