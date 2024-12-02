@@ -34,7 +34,7 @@ def evaluate_svm(svm, val_embs, val_labels):
     return val_acc, conf_mat
 
 
-def evaluate_phase_classification(ckpt_step, train_embs, train_labels, val_embs, val_labels, act_name, CONFIG,  writer=None, verbose=False):
+def evaluate_phase_classification(ckpt_step, train_embs, train_labels, val_embs, val_labels, act_name, CONFIG,  writer=None, verbose=False, csv_dict=None):
 
     for frac in CONFIG.EVAL.CLASSIFICATION_FRACTIONS:
         N_Vids = max(1, int(len(train_embs) * frac))
@@ -59,6 +59,7 @@ def evaluate_phase_classification(ckpt_step, train_embs, train_labels, val_embs,
         writer.add_scalar(f'classification/val_{act_name}_{frac}', val_acc, global_step=ckpt_step)
         
         # print(f'classification/train_{act_name}_{frac}', train_acc, f"global_step={ckpt_step}")
+        csv_dict[f"PC ({frac})"]=val_acc
         print(f'IMPORTANT!!!         classification/val_{act_name}_{frac}', val_acc, f"global_step={ckpt_step}")
 
     return train_acc, val_acc
