@@ -107,7 +107,7 @@ class AlignNet(LightningModule):
         # x = self.emb(x, num_frames)
         # return x
 
-    def forward(self, x, masks):
+    def forward(self, x, masks=None):
         return self.model(x, video_masks=masks, project=self.cfg.MODEL.PROJECTION)
 
     def training_step(self, batch, batch_idx):
@@ -350,8 +350,8 @@ if __name__ == '__main__':
                         help='do not initialize clusters with kmeans default = True')
     parser.add_argument('--n-clusters', '-c', type=int, default=5,
                         help='number of actions/clusters')
-    parser.add_argument('--beta', '-b', type=float, default=10,
-                        help='the weight used when combining alignment and segmentation losses')
+    parser.add_argument('--beta', '-b', type=float, default=100,
+                        help='the weight used for segmentation loss')
     ###############
 
     args = parser.parse_args()
