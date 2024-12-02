@@ -1,5 +1,6 @@
 import os
 import numpy as np
+import csv
 
 import utils
 import align_dataset_test as align_dataset
@@ -64,7 +65,7 @@ def get_embeddings(model, data, labels_npy, args):
             seq_embs = seq_embs[:end]
             # make the no. of framepaths same as the no. of embs 
             seq_fpaths = seq_fpaths[:end]
-
+            print(": : : Running get_embeddings() : : :")
             embeddings.append(seq_embs[:end])
             frame_paths.append(seq_fpaths)
             names.append(a_name)
@@ -77,8 +78,20 @@ def main(ckpts, args):
     
     summary_dest = os.path.join(args.dest, 'eval_logs')
     os.makedirs(summary_dest, exist_ok=True)
+
+    # Define the CSV file path
+    csv_path = os.path.join(args.dest, 'evaluation_results.csv')
+    csv_headers = ['step', 'PC (0.1)', 'PC (0.5)', 'PC (1.0)', 
+                   'Progression', 'Kendall Tau', 'AP@5', 'AP@10', 'AP@15']
+
+    # Create the csv file and write the header
+    with open(csv_path, 'w', newline='') as csv_file:
+        csvwriter = csv.writer(csv_file)
+        csvwriter.writerow(csv_headers)
     
     for ckpt in ckpts:
+        # Init the dict to store the next row of the csv
+        csv_dict = dict()
         writer = SummaryWriter(summary_dest, filename_suffix='eval_logs')
         
         print(f"\n\nStarting Evaluation On Checkpoint: {ckpt}\n\n")
@@ -106,7 +119,7 @@ def main(ckpts, args):
             data_path = args.data_path
         else:
             data_path = CONFIG.DATA_PATH
-        data_path = './Data_Test2/'
+        data_path = './Data_Test/'
         
         train_path = os.path.join(data_path, 'Test')
         val_path = os.path.join(data_path, 'Test')
@@ -159,7 +172,7 @@ def main(ckpts, args):
 
             # Evaluating Classification
             train_acc, val_acc = evaluate_phase_classification(ckpt_step, train_embs, train_labels, val_embs, val_labels, 
-                                                                act_name=train_act_name, CONFIG=CONFIG, writer=writer, verbose=args.verbose)
+                                                                act_name=train_act_name, CONFIG=CONFIG, writer=writer, verbose=args.verbose, csv_dict=csv_dict)
             
             # Note: if you want to log the frame retrievals and scores, then pass log=True to compute_ap() 
             ap5, ap10, ap15 = compute_ap(val_embs, val_labels, val_names, val_frame_paths)
@@ -203,6 +216,10 @@ def main(ckpts, args):
         writer.add_scalar('metrics/all_phase_progression_train', train_phase_prog, global_step=ckpt_step)
         writer.add_scalar('metrics/all_phase_progression_val', val_phase_prog, global_step=ckpt_step)
 
+        csv_dict["step"]=ckpt_step
+        csv_dict["AP@5"]=ap5
+        csv_dict["AP@10"]=ap10
+        csv_dict["AP@15"]=ap15
         print('IMPORTANT!!!         metrics/AP@5_val', ap5, f"global_step={ckpt_step}")
         print('IMPORTANT!!!         metrics/AP@10_val', ap10, f"global_step={ckpt_step}")
         print('IMPORTANT!!!         metrics/AP@15_val', ap15, f"global_step={ckpt_step}")
@@ -211,10 +228,18 @@ def main(ckpts, args):
         # print('metrics/all_classification_val', val_classification, f"global_step={ckpt_step}")
 
         # print('metrics/all_kendalls_tau_train', train_kendalls_tau, f"global_step={ckpt_step}")
+        csv_dict["Kendall Tau"]=val_kendalls_tau
         print('IMPORTANT!!!         metrics/all_kendalls_tau_val', val_kendalls_tau, f"global_step={ckpt_step}")
 
         # print('metrics/all_phase_progression_train', train_phase_prog, f"global_step={ckpt_step}")
+        csv_dict["Progression"]=val_phase_prog
         print('IMPORTANT!!!         metrics/all_phase_progression_val', val_phase_prog, f"global_step={ckpt_step}")
+
+        # Write the row in the correct order
+        with open(csv_path, 'a', newline='') as csv_file:
+            csvwriter = csv.writer(csv_file)
+            row = [csv_dict.get(header, '') for header in csv_headers]
+            csvwriter.writerow(row)
 
         writer.flush()
     
