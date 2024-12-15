@@ -76,10 +76,11 @@ def get_embeddings(model, data, labels_npy, args):
 
 def main(ckpts, args):
     
-    summary_dest = os.path.join(args.dest, 'eval_logs')
-    os.makedirs(summary_dest, exist_ok=True)
+    # summary_dest = os.path.join(args.dest, 'eval_logs')
+    # os.makedirs(summary_dest, exist_ok=True)
 
-    # Define the CSV file path
+    # Make the log directory and Define the CSV file path
+    os.makedirs(args.dest, exist_ok=True)
     csv_path = os.path.join(args.dest, 'evaluation_results.csv')
     csv_headers = ['step', 'PC (0.1)', 'PC (0.5)', 'PC (1.0)', 
                    'Progression', 'Kendall Tau', 'AP@5', 'AP@10', 'AP@15']
@@ -92,7 +93,9 @@ def main(ckpts, args):
     for ckpt in ckpts:
         # Init the dict to store the next row of the csv
         csv_dict = dict()
-        writer = SummaryWriter(summary_dest, filename_suffix='eval_logs')
+
+        writer = None
+        # writer = SummaryWriter(summary_dest, filename_suffix='eval_logs')
         
         print(f"\n\nStarting Evaluation On Checkpoint: {ckpt}\n\n")
 
@@ -120,10 +123,12 @@ def main(ckpts, args):
         else:
             data_path = CONFIG.DATA_PATH
         data_path = './Data_Test/'
+        # data_path = './Data_Train/'
         
         train_path = os.path.join(data_path, 'Test')
         val_path = os.path.join(data_path, 'Test')
         lab_name = "pouring" + "_val"
+        # lab_name = "pouring" + "_train"
         labels = np.load(f"./npyrecords/{lab_name}.npy", allow_pickle=True).item()
 
         # create dataset
@@ -157,18 +162,18 @@ def main(ckpts, args):
             train_embs, train_names, train_labels, train_frame_paths = val_embs, val_names, val_labels, val_frame_paths
 
             # # save embeddings
-            os.makedirs(DEST, exist_ok=True)
-            DEST_TRAIN = os.path.join(DEST, f'train_{train_act_name}_embs.npy')
-            DEST_VAL = os.path.join(DEST, f'val_{val_act_name}_embs.npy')
+            # os.makedirs(DEST, exist_ok=True)
+            # DEST_TRAIN = os.path.join(DEST, f'train_{train_act_name}_embs.npy')
+            # DEST_VAL = os.path.join(DEST, f'val_{val_act_name}_embs.npy')
 
-            np.save(DEST_TRAIN, {'embs' : train_embs, 'names':train_names, 'labels': train_labels, 'frame_paths': train_frame_paths})
-            np.save(DEST_VAL,   {'embs' : val_embs,   'names':val_names,   'labels': val_labels,   'frame_paths': val_frame_paths})
+            # np.save(DEST_TRAIN, {'embs' : train_embs, 'names':train_names, 'labels': train_labels, 'frame_paths': train_frame_paths})
+            # np.save(DEST_VAL,   {'embs' : val_embs,   'names':val_names,   'labels': val_labels,   'frame_paths': val_frame_paths})
             
-            train_embeddings = np.load(DEST_TRAIN, allow_pickle=True).tolist()
-            val_embeddings = np.load(DEST_VAL, allow_pickle=True).tolist()
+            # train_embeddings = np.load(DEST_TRAIN, allow_pickle=True).tolist()
+            # val_embeddings = np.load(DEST_VAL, allow_pickle=True).tolist()
 
-            train_embs, train_labels, train_names, train_frame_paths = train_embeddings['embs'], train_embeddings['labels'], train_embeddings['names'], train_embeddings['frame_paths']
-            val_embs, val_labels, val_names, val_frame_paths = val_embeddings['embs'], val_embeddings['labels'], val_embeddings['names'], val_embeddings['frame_paths']
+            # train_embs, train_labels, train_names, train_frame_paths = train_embeddings['embs'], train_embeddings['labels'], train_embeddings['names'], train_embeddings['frame_paths']
+            # val_embs, val_labels, val_names, val_frame_paths = val_embeddings['embs'], val_embeddings['labels'], val_embeddings['names'], val_embeddings['frame_paths']
 
             # Evaluating Classification
             train_acc, val_acc = evaluate_phase_classification(ckpt_step, train_embs, train_labels, val_embs, val_labels, 
@@ -187,15 +192,16 @@ def main(ckpts, args):
             # print(f"Kendal's Tau: Stride = {args.stride} \n")
             # print(f"Train = {train_tau}\n")
             # print(f"Val = {val_tau}\n")
-
-            writer.add_scalar(f'kendalls_tau/train_{train_act_name}', train_tau, global_step=ckpt_step)
-            writer.add_scalar(f'kendalls_tau/val_{val_act_name}', val_tau, global_step=ckpt_step)
+            
+            if writer:
+                writer.add_scalar(f'kendalls_tau/train_{train_act_name}', train_tau, global_step=ckpt_step)
+                writer.add_scalar(f'kendalls_tau/val_{val_act_name}', val_tau, global_step=ckpt_step)
 
             # Evaluating Phase Progression
             _train_dict = {'embs': train_embs, 'labels': train_labels}
             _val_dict = {'embs': val_embs, 'labels': val_labels}
             train_phase_scores, val_phase_scores = evaluate_phase_progression(_train_dict, _val_dict, "_".join(lab_name.split('_')[:-1]),
-                                                                                ckpt_step, CONFIG, writer, verbose=args.verbose)
+                                                                                ckpt_step, CONFIG, writer=writer, verbose=args.verbose)
 
             all_phase_progressions.append([train_phase_scores[-1], val_phase_scores[-1]])
 
@@ -203,18 +209,19 @@ def main(ckpts, args):
         train_kendalls_tau, val_kendalls_tau = np.mean(all_kendalls_taus, axis=0)
         train_phase_prog, val_phase_prog = np.mean(all_phase_progressions, axis=0)
 
-        writer.add_scalar('metrics/AP@5_val', ap5, global_step=ckpt_step)
-        writer.add_scalar('metrics/AP@10_val', ap10, global_step=ckpt_step)
-        writer.add_scalar('metrics/AP@15_val', ap15, global_step=ckpt_step)
-        
-        writer.add_scalar('metrics/all_classification_train', train_classification, global_step=ckpt_step)
-        writer.add_scalar('metrics/all_classification_val', val_classification, global_step=ckpt_step)
-        
-        writer.add_scalar('metrics/all_kendalls_tau_train', train_kendalls_tau, global_step=ckpt_step)
-        writer.add_scalar('metrics/all_kendalls_tau_val', val_kendalls_tau, global_step=ckpt_step)
+        if writer:
+            writer.add_scalar('metrics/AP@5_val', ap5, global_step=ckpt_step)
+            writer.add_scalar('metrics/AP@10_val', ap10, global_step=ckpt_step)
+            writer.add_scalar('metrics/AP@15_val', ap15, global_step=ckpt_step)
+            
+            writer.add_scalar('metrics/all_classification_train', train_classification, global_step=ckpt_step)
+            writer.add_scalar('metrics/all_classification_val', val_classification, global_step=ckpt_step)
+            
+            writer.add_scalar('metrics/all_kendalls_tau_train', train_kendalls_tau, global_step=ckpt_step)
+            writer.add_scalar('metrics/all_kendalls_tau_val', val_kendalls_tau, global_step=ckpt_step)
 
-        writer.add_scalar('metrics/all_phase_progression_train', train_phase_prog, global_step=ckpt_step)
-        writer.add_scalar('metrics/all_phase_progression_val', val_phase_prog, global_step=ckpt_step)
+            writer.add_scalar('metrics/all_phase_progression_train', train_phase_prog, global_step=ckpt_step)
+            writer.add_scalar('metrics/all_phase_progression_val', val_phase_prog, global_step=ckpt_step)
 
         csv_dict["step"]=ckpt_step
         csv_dict["AP@5"]=ap5
@@ -241,9 +248,9 @@ def main(ckpts, args):
             row = [csv_dict.get(header, '') for header in csv_headers]
             csvwriter.writerow(row)
 
-        writer.flush()
-    
-        writer.close()
+        if writer:
+            writer.flush()
+            writer.close()
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser()

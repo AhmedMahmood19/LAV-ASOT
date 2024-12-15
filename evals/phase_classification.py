@@ -54,9 +54,9 @@ def evaluate_phase_classification(ckpt_step, train_embs, train_labels, val_embs,
             print('Val-Acc: ', val_acc)
             print('Conf-Mat: ', conf_mat)
 
-
-        writer.add_scalar(f'classification/train_{act_name}_{frac}', train_acc, global_step=ckpt_step)
-        writer.add_scalar(f'classification/val_{act_name}_{frac}', val_acc, global_step=ckpt_step)
+        if writer:
+            writer.add_scalar(f'classification/train_{act_name}_{frac}', train_acc, global_step=ckpt_step)
+            writer.add_scalar(f'classification/val_{act_name}_{frac}', val_acc, global_step=ckpt_step)
         
         # print(f'classification/train_{act_name}_{frac}', train_acc, f"global_step={ckpt_step}")
         csv_dict[f"PC ({frac})"]=val_acc
