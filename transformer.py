@@ -249,7 +249,15 @@ class TransformerEmbModel(nn.Module):
         super().__init__()
         self.cfg = cfg
         drop_rate = cfg.MODEL.EMBEDDER_MODEL.FC_DROPOUT_RATE
-        in_channels = cfg.MODEL.BASE_MODEL.OUT_CHANNEL
+
+        ##### The following changes were made for the context frames code
+        in_channels = 512
+        self.conv1 = nn.Conv3d(in_channels=2048, out_channels=512, kernel_size=3, padding=1)
+        self.bn1 = nn.BatchNorm1d(512)
+        self.conv2 = nn.Conv3d(in_channels=512, out_channels=512, kernel_size=3, padding=1)
+        self.bn2 = nn.BatchNorm1d(512)
+        #####
+
         cap_scalar = cfg.MODEL.EMBEDDER_MODEL.CAPACITY_SCALAR
         fc_params = cfg.MODEL.EMBEDDER_MODEL.FC_LAYERS
         self.embedding_size = cfg.MODEL.EMBEDDER_MODEL.EMBEDDING_SIZE
@@ -257,6 +265,11 @@ class TransformerEmbModel(nn.Module):
         # self.pooling = nn.AdaptiveMaxPool2d(1)
         self.pooling = nn.AdaptiveAvgPool2d(1)
         
+        # DE-BUG Due to line348, in_channels=2048, cap_scalar=2, fc_params = [[256, True], [256, True]]
+        # fc_layers[0]=Dropout(0.1)->Linear(2048, 512)->BatchNorm1d(512)->ReLU(True)
+        # in_channels = 512
+        # fc_layers[1]=Dropout(0.1)->Linear(512, 512)->BatchNorm1d(512)->ReLU(True)
+        # self.video_emb = nn.Linear(512, 256)
         self.fc_layers = []
         for channels, activate in fc_params:
             channels = channels*cap_scalar
@@ -276,24 +289,84 @@ class TransformerEmbModel(nn.Module):
         
         self.embedding_layer = nn.Linear(hidden_channels, self.embedding_size)
 
-    def forward(self, x, video_masks=None):
-        batch_size, num_steps, c, h, w = x.shape
-        x = x.view(batch_size*num_steps, c, h, w)
+    # This function was added for the context frames code
+    def apply_bn(self, bn, x):
+        N, C, T, H, W = x.shape
+        x = x.permute(0, 2, 3, 4, 1)
+        x = torch.reshape(x, (-1, x.shape[-1]))
+        x = bn(x)
+        x = torch.reshape(x, (N, T, H, W, C))
+        x = x.permute(0, 4, 1, 2, 3)
+        return x
 
-        x = self.pooling(x)
-        x = torch.flatten(x, start_dim=1)
+    def forward(self, x, num_frames=None, video_masks=None):
+
+        ###OLD CODE
+        # #NOTE: These are not the real shapes of X, these were just written to get an idea of how to compare to ConvEmbedder
+        # # Shape of X: (batch_size=2, num_steps=40, c=1024, h=7, w=7)
+        # batch_size, num_steps, c, h, w = x.shape
+        # # Shape of X: (80, 1024, 7, 7)
+        # x = x.view(batch_size*num_steps, c, h, w)
+
+        # # Shape of X: (80, 1024, 1, 1)
+        # x = self.pooling(x)
+        # # Shape of X: (80, 1024)
+        # x = torch.flatten(x, start_dim=1)
+
+
+#START CTXT FRAMES CODE##########################################################################################
+        # After this, Shape of X: (batch_size=2, total_num_steps=40, c=2048, h=7, w=7)
+        batch_size, total_num_steps, c, h, w = x.shape
+        # Since num_frames can vary in evaluations.py, we need to pass it when calling forward()
+        # Since num_frames is constant in train.py, we don't pass it and simply use the value from cfg
+        if num_frames is None:
+            num_frames = self.cfg.MODEL.BASE_MODEL.LAV_NUM_FRAMES
+        num_context = self.cfg.MODEL.BASE_MODEL.LAV_NUM_CONTEXT
+        
+        # After this, Shape of X: (40, 2, 2048, 7, 7)
+        x = torch.reshape(x, (batch_size * num_frames, num_context, c, h, w))
+
+        # After this, Shape of X: (40, 2048, 2, 7, 7)
+        x = x.transpose(1, 2)
+
+        # After this, Shape of X: (40, 512, 2, 7, 7) 
+        x = self.conv1(x)
+        x = self.apply_bn(self.bn1, x)
+        x = F.relu(x)
+
+        # After this, Shape of X: (40, 512, 2, 7, 7)
+        x = self.conv2(x)
+        x = self.apply_bn(self.bn2, x)
+        x = F.relu(x)
+
+        # Global Max Pooling:
+        # x.view(...) flattens the spatial dimensions (2, 7, 7) into a single dimension: 2 * 7 * 7 = 98
+        # After this, Shape of X: (40, 512, 98)
+        # torch.max(..., dim=-1) performs max pooling over the last dimension, reducing it to 1.
+        # After this, Shape of X: (40, 512)
+        x = torch.max(x.view(x.size(0), x.size(1), -1), dim=-1)[0]
+#END CTXT FRAMES CODE##########################################################################################
+
+
+        # After this, Shape of X: (40, 512)
         x = self.fc_layers(x)
+        # After this, Shape of X: (40, 256)
         x = self.video_emb(x)
-        x = x.view(batch_size, num_steps, x.size(1))
+
+        # After this, Shape of X: (batch_size=2, num_steps=20, 256)
+        x = x.view(batch_size, num_frames, x.size(1))
         x = self.video_pos_enc(x)
         # The input as well as the output of the transformer encoders has the shape (batch_size, num_steps, 256)
         if self.cfg.MODEL.EMBEDDER_MODEL.NUM_LAYERS > 0:
             x = self.video_encoder(x, src_mask=video_masks)
 
-        x = x.view(batch_size*num_steps, -1)
+        # After this, Shape of X: (40, 256)
+        x = x.view(batch_size*num_frames, -1)
         # transformer's output embeddings passed to a linear layer to produce embeddings of size embedding_size or 128
+        # After this, Shape of X: (40, 128)
         x = self.embedding_layer(x)
-        x = x.view(batch_size, num_steps, self.embedding_size)
+        # After this, Shape of X: (batch_size=2, num_steps=20, embedding_size=128)
+        x = x.view(batch_size, num_frames, self.embedding_size)
         return x
 
 def load_byol_pretrained(pretrained_weights):
@@ -361,8 +434,9 @@ class TransformerModel(nn.Module):
             backbone_out.append(curr_emb)
         x = torch.cat(backbone_out, dim=1)
         
+        # At this point X shape: [2, 40, 2048, 7, 7]
         # Before sending to TransformerEmbModel, x has the shape (batch_size, num_steps, featmap_channels, featmap_height, featmap_width)
-        x = self.embed(x, video_masks=video_masks)
+        x = self.embed(x, num_frames=num_frames, video_masks=video_masks)
 
         # Finally pass the output embeddings through a MLP Head and normalize them to obtain the final embeddings of shape (batch_size, num_steps, EMBEDDING_SIZE or 128)
         if self.cfg.MODEL.PROJECTION and project:

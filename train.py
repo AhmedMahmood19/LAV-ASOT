@@ -4,6 +4,7 @@ import torch.nn as nn
 import torch.optim as optim
 import torch.nn.functional as F
 from torch.utils.data import DataLoader
+from tqdm import tqdm
 from transformer import TransformerModel
 from carlutils.parser import load_config
 import alignment_asot, segmentation_asot
@@ -32,6 +33,8 @@ class AlignNet(LightningModule):
         super(AlignNet, self).__init__()
 
         self.cfg = load_config(yaml_file='carlutils/scl_transformer_config.yml')
+        self.cfg.MODEL.BASE_MODEL.LAV_NUM_FRAMES = config.TRAIN.NUM_FRAMES
+        self.cfg.MODEL.BASE_MODEL.LAV_NUM_CONTEXT = config.DATA.NUM_CONTEXT
         self.model = TransformerModel(self.cfg)
 
         # self.base_cnn = BaseModel(pretrained=True)
@@ -94,21 +97,8 @@ class AlignNet(LightningModule):
     def train(self, mode=True):
         super(AlignNet, self).train(mode=mode)
 
-        # if self.freeze_base:
-        #     if self.freeze_bn_only:
-        #         utils.freeze_bn_only(module=self.base_cnn)
-        #     else:
-        #         utils.freeze(module=self.base_cnn, train_bn=False)
-
-    # def forward(self, x):
-        # num_ctxt = self.hparams.config.DATA.NUM_CONTEXT
-        # num_frames = x.size(1) // num_ctxt
-        # x = self.base_cnn(x)
-        # x = self.emb(x, num_frames)
-        # return x
-
-    def forward(self, x, masks=None):
-        return self.model(x, video_masks=masks, project=self.cfg.MODEL.PROJECTION)
+    def forward(self, x, num_frames=None, masks=None):
+        return self.model(x, num_frames=num_frames, video_masks=masks, project=self.cfg.MODEL.PROJECTION)
 
     def training_step(self, batch, batch_idx):
         # Read AlignData's __getitem__() to understand what is returned in the batch
@@ -120,7 +110,7 @@ class AlignNet(LightningModule):
         # Concatenate the masks
         masks = torch.stack([a_mask, b_mask], dim=0)
         # Pass to the encoder to produce framewise embeddings
-        embs = self.forward(X, masks)
+        embs = self.forward(x=X, masks=masks)
 
         # a_embs/b_embs is a tensor of shape (batchsize=1, 20, embeddingsize=128) representing the 20 framewise embeddings
         a_embs, b_embs = torch.split(embs, a_X.size(0), dim=0)
@@ -255,8 +245,9 @@ class AlignNet(LightningModule):
             # self.base_cnn.eval()
             # self.emb.eval()
             self.model.eval()
-            for (a_X, _, _, _, a_mask), (_, _, _, _, _) in dataloader:
-                features = self.forward(a_X, a_mask)
+            # for (a_X, _, _, _, a_mask), (_, _, _, _, _) in dataloader:
+            for (a_X, _, _, _, a_mask), (_, _, _, _, _) in tqdm(dataloader, desc="Running fit_clusters()", total=len(dataloader)):
+                features = self.forward(x=a_X, masks=a_mask)
 
                 features_full.append(features)
             features_full = torch.cat(features_full, dim=0).reshape(-1, features.shape[2]).cpu().numpy()
@@ -289,7 +280,7 @@ def main(hparams):
             # Get the train data loader specifically for fit_clusters()
             train_loader = model.train_dataloader()
             model.fit_clusters(train_loader, hparams.N_CLUSTERS)
-
+            print("fit_clusters() completed, starting training...")
         trainer.fit(model)
 
     except KeyboardInterrupt:
@@ -326,12 +317,12 @@ if __name__ == '__main__':
                         help='number of outer and inner iterations for ASOT solver (eval)')
     parser.add_argument('--step-size', '-ss', type=float, default=None,
                         help='Step size/learning rate for ASOT solver. Worth setting manually if ub-frames && ub-actions')
-    parser.add_argument('--eps-train', '-et', type=float, default=0.07,
-                        help='entropy regularization for OT during training')  # original 0.07, changed 0.065
-    parser.add_argument('--eps-eval', '-ee', type=float, default=0.04,
+    parser.add_argument('--eps-train', '-et', type=float, default=0.09,
+                        help='entropy regularization for OT during training')
+    parser.add_argument('--eps-eval', '-ee', type=float, default=0.09,
                         help='entropy regularization for OT during val/test')
     parser.add_argument('--radius-gw', '-r', type=float, default=0.02,
-                        help='Radius parameter for GW structure loss')  # original 0.02
+                        help='Radius parameter for GW structure loss')
     parser.add_argument('--ub-frames', '-uf', action='store_true',
                         help='relaxes balanced assignment assumption over frames, i.e., each frame is assigned')
     parser.add_argument('--ub-actions', '-ua', action='store_true',
@@ -350,7 +341,7 @@ if __name__ == '__main__':
                         help='do not initialize clusters with kmeans default = True')
     parser.add_argument('--n-clusters', '-c', type=int, default=5,
                         help='number of actions/clusters')
-    parser.add_argument('--beta', '-b', type=float, default=100,
+    parser.add_argument('--beta', '-b', type=float, default=0,
                         help='the weight used for segmentation loss')
     ###############
 
@@ -397,7 +388,7 @@ if __name__ == '__main__':
         CONFIG.RHO = args.rho
     if args.n_clusters:
         CONFIG.N_CLUSTERS = args.n_clusters
-    if args.beta:
+    if args.beta is not None:
         CONFIG.BETA = args.beta
     # NOTE: the default values of these args cause the if condition to fail, so we wont use the if condition for them
     CONFIG.K_MEANS = args.k_means

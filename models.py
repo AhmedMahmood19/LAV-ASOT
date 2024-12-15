@@ -37,36 +37,51 @@ class ConvEmbedder(nn.Module):
 
     def forward(self, x, num_frames):
 
+        # Shape of X: (batch_size=2, total_num_steps=40, c=1024, h=7, w=7)
         batch_size, total_num_steps, c, h, w = x.shape
+        # num_context=2, total_num_steps=40, num_frames=20
         num_context = total_num_steps // num_frames
+        # Shape of X: (40, 2, 1024, 7, 7)
         x = torch.reshape(x, (batch_size * num_frames, num_context, c, h, w))
 
         # TxCxHxW -> CxTxHxW
+        # Shape of X: (40, 1024, 2, 7, 7)
         x = x.transpose(1, 2)
 
+        # Shape of X: (40, 512, 2, 7, 7)
         x = self.conv1(x)
 
         x = self.apply_bn(self.bn1, x)
         x = F.relu(x)
 
+        # Shape of X: (40, 512, 2, 7, 7)
         x = self.conv2(x)
         x = self.apply_bn(self.bn2, x)
         x = F.relu(x)
 
+        # Global Max Pooling:
+        # x.view(...) flattens the spatial dimensions (2, 7, 7) into a single dimension: 2 * 7 * 7 = 98
+        # Shape of X: (40, 512, 98)
+        # torch.max(..., dim=-1) performs max pooling over the last dimension, reducing it to 1.
+        # Shape of X: (40, 512)
         x = torch.max(x.view(x.size(0), x.size(1), -1), dim=-1)[0]
         x = self.dropout1(x)
+        # Shape of X: (40, 512)
         x = self.fc1(x)
         x = F.relu(x)
 
         x = self.dropout2(x)
+        # Shape of X: (40, 512)
         x = self.fc2(x)
         x = F.relu(x)
 
+        # Shape of X: (40, 128)
         x = self.embedding_layer(x)
 
         if self.l2_normalize:
             x = F.normalize(x, p=2, dim=-1)
         
+        # Reshape X to: (batch_size=2, num_frames=20, emb_size=128)
         x = torch.reshape(x, (batch_size, num_frames, self.emb_size))
         return x
 

@@ -45,7 +45,7 @@ def get_embeddings(model, data, labels_npy, args):
                 except:
                     b = torch.from_numpy(np.array([])).float().to(device)
                 a_X = torch.concat([a_X,b], axis=1)
-                a_emb = model(a_X)[:, :original,:]
+                a_emb = model(x=a_X, num_frames=original)[:, :original,:]
 
                 if args.verbose:
                     print(f'Seq: {i}, ', a_emb.shape)
@@ -261,7 +261,7 @@ if __name__ == '__main__':
 
     parser.add_argument('--stride', type=int, default=4)
     parser.add_argument('--visualize', dest='visualize', action='store_true')
-    parser.add_argument('--device', type=int, default=0, help='Cuda device to be used')
+    parser.add_argument('--device', type=int, default=1, help='Cuda device to be used')
     parser.add_argument('--verbose', action='store_true')
     parser.add_argument('--num_frames', type=int, default=None, help='Path to dataset')
 
