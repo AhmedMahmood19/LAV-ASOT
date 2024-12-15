@@ -1,13 +1,19 @@
 import pandas as pd
 import matplotlib.pyplot as plt
 
-# Paths to CSV files
-loss_csv_path = "/workspace/AHMED-LAV-ASOT/LOGS/lightning_logs/version_0/metrics.csv"
-    
+########################################
+# SET THE MODE BEFORE RUNNING THE CODE #
+########################################
+mode = "val"
+########################################
+
+loss_csv_path = "./LOGS/lightning_logs/version_0/metrics.csv"
+if mode=="val":
     # Metrics of val set:
-# metrics_csv_path = "/workspace/AHMED-LAV-ASOT/log/evaluation_results.csv"
+    metrics_csv_path = "./log_val/evaluation_results.csv"
+elif mode=="train":
     # Metrics of train set:
-metrics_csv_path = "/workspace/AHMED-LAV-ASOT/log2/evaluation_results.csv"
+    metrics_csv_path = "./log_train/evaluation_results.csv"
 
 # Read the CSV files into DataFrames
 metrics_df = pd.read_csv(metrics_csv_path)
@@ -72,10 +78,12 @@ ax2.legend(loc='lower left')
 plt.title(f"Metrics and Train Loss Over {train_steps.values[-1]} Training Steps")
 
 # Save the figure
+if mode=="val":
     # Path for val set:
-# output_path = "plot_of_metrics_and_loss-VALSET.png"
+    output_path = "plot_of_metrics_and_loss-VALSET.png"
+elif mode=="train":
     # Path for train set:
-output_path = "plot_of_metrics_and_loss-TRAINSET.png"
+    output_path = "plot_of_metrics_and_loss-TRAINSET.png"
 
 plt.tight_layout()  # Adjust layout
 plt.savefig(output_path)
