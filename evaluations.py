@@ -106,7 +106,7 @@ def main(ckpts, args):
             data_path = args.data_path
         else:
             data_path = CONFIG.DATA_PATH
-        data_path = './Data_Test2/'
+        data_path = './Data_Test/'
         
         train_path = os.path.join(data_path, 'Test')
         val_path = os.path.join(data_path, 'Test')

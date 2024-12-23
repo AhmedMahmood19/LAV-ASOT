@@ -122,6 +122,7 @@ class AlignNet(LightningModule):
         T_Y = features_Y.shape[1]
         mask_X, mask_Y = a_mask, b_mask
 
+        # print(mask_X.shape)
 
 
 #######################START SEGMENTATION####################################
@@ -137,9 +138,10 @@ class AlignNet(LightningModule):
             temp_prior_segmentation_X = segmentation_asot.temporal_prior(T_X, self.n_clusters, self.rho, features_X.device)
             cost_matrix_segmentation_X = 1. - features_X @ self.clusters.T.unsqueeze(0)
             cost_matrix_segmentation_X += temp_prior_segmentation_X
+            # print(cost_matrix_segmentation_X.shape)
             opt_codes_segmentation_X, _ = segmentation_asot.segment_asot(cost_matrix_segmentation_X, mask_X,
                                                                          eps=self.train_eps, alpha=self.alpha_train, radius=self.radius_gw, 
-                                                                         ub_frames=self.ub_frames, ub_actions=self.ub_actions, 
+                                                                         ub_frames=True, ub_actions=True,
                                                                          lambda_frames=self.lambda_frames_train, 
                                                                          lambda_actions=self.lambda_actions_train, 
                                                                          n_iters=self.n_ot_train, step_size=self.step_size)
@@ -159,7 +161,7 @@ class AlignNet(LightningModule):
             cost_matrix_segmentation_Y += temp_prior_segmentation_Y
             opt_codes_segmentation_Y, _ = segmentation_asot.segment_asot(cost_matrix_segmentation_Y, mask_Y, 
                                                                          eps=self.train_eps, alpha=self.alpha_train, radius=self.radius_gw,
-                                                                         ub_frames=self.ub_frames, ub_actions=self.ub_actions,
+                                                                         ub_frames=True, ub_actions=True,
                                                                          lambda_frames=self.lambda_frames_train,
                                                                          lambda_actions=self.lambda_actions_train,
                                                                          n_iters=self.n_ot_train, step_size=self.step_size)
@@ -268,7 +270,7 @@ def main(hparams):
         checkpoint_callback = utils.CheckpointEveryNSteps(hparams.TRAIN.SAVE_INTERVAL_ITERS, filepath=os.path.join(hparams.CKPT_PATH, 'STEPS'))
         csv_logger = CSVLogger(save_dir='LOGS', name="lightning_logs")
 
-        trainer = Trainer(gpus=[1], max_epochs=hparams.TRAIN.EPOCHS, default_root_dir=hparams.ROOT,
+        trainer = Trainer(gpus=[0], max_epochs=hparams.TRAIN.EPOCHS, default_root_dir=hparams.ROOT,
                           deterministic=True, callbacks=[checkpoint_callback], 
                           limit_val_batches=0, check_val_every_n_epoch=0, num_sanity_val_steps=0,
                           logger=csv_logger, log_every_n_steps=5)
@@ -327,19 +329,19 @@ if __name__ == '__main__':
                         help='relaxes balanced assignment assumption over actions, i.e., each action is uniformly represented in a video')
     parser.add_argument('--lambda-frames-train', '-lft', type=float, default=0.05,
                         help='penalty on balanced frames assumption for training')  # original 0.05
-    parser.add_argument('--lambda-actions-train', '-lat', type=float, default=0.05,
+    parser.add_argument('--lambda-actions-train', '-lat', type=float, default=0.16,
                         help='penalty on balanced actions assumption for training')  # original 0.05
     parser.add_argument('--lambda-frames-eval', '-lfe', type=float, default=0.05,
                         help='penalty on balanced frames assumption for test')
     parser.add_argument('--lambda-actions-eval', '-lae', type=float, default=0.01,
                         help='penalty on balanced actions assumption for test')
-    parser.add_argument('--rho', type=float, default=0.35,
+    parser.add_argument('--rho', type=float, default=0.25,
                         help='Factor for global structure weighting term')  # original was 0.25, 0.2 yield better results
     parser.add_argument('--k-means', '-km', action='store_false',
                         help='do not initialize clusters with kmeans default = True')
-    parser.add_argument('--n-clusters', '-c', type=int, default=5,
+    parser.add_argument('--n-clusters', '-c', type=int, default=22,
                         help='number of actions/clusters')
-    parser.add_argument('--beta', '-b', type=float, default=10,
+    parser.add_argument('--beta', '-b', type=float, default=1,
                         help='the weight used when combining alignment and segmentation losses')
     ###############
 

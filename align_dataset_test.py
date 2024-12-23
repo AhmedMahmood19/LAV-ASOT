@@ -26,7 +26,9 @@ class AlignData(IterableDataset):
     def __init__(self, path, batch_size, data_config, transform=False, flatten=False):
         
         self.act_sequences = natsorted(glob.glob(os.path.join(path, '*')))
+
         self.n_classes = len(self.act_sequences)
+
         
         self.batch_size = batch_size
         self.config = data_config
@@ -69,26 +71,33 @@ class AlignData(IterableDataset):
                 act_sequences = [self.act_sequences[self.action]]
         else:
             act_sequences = self.act_sequences
-        
+        # print(act_sequences)
         for _action in act_sequences:
+            # print("In action iter")
             if self._one_vid:
                 sequences = [self.spec_vid]
             else:
                 sequences = natsorted(glob.glob(os.path.join(_action, '*')))
                 if self.num_seqs is not None:
                     sequences = random.sample(sequences, min(self.num_seqs, len(sequences)))
+            # print(_action) #it is desktop_assembly
+            # print(sequences) # it is path to videos in desktop_assembly
 
             get_frame_paths = lambda x : sorted(glob.glob(os.path.join(x, '*')))
 
             def seq_iter():
                 for seq in sequences:
-                    
+                    # print("In seq_iter")
                     def frame_iter():
+                        # print("In frame iter")
                         frames = get_frame_paths(seq)
+                        # print(frames) #all the frames in
+                        # print(len(frames))
                         num_context = self.config.NUM_CONTEXT
                         batch_step = num_context * self.batch_size
 
                         frames, steps = sample_frames(frames, num_context, self.config.CONTEXT_STRIDE)
+
                         for i in range(0, len(frames), batch_step):
                             a_frames = frames[i:i+batch_step]
                             a_x = utils.get_pil_images(a_frames)
@@ -98,6 +107,8 @@ class AlignData(IterableDataset):
                                 a_x = a_x.view((a_x.shape[0], -1))
                             
                             a_name = os.path.join(os.path.basename(_action), os.path.basename(seq))
+                            # print(a_frames[num_context-1::num_context])
+                            # print(a_name)
 
                             yield a_x, a_name, a_frames[num_context-1::num_context]
 
