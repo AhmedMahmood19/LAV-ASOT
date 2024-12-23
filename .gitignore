@@ -7,6 +7,7 @@ LOGS2
 aplog
 log*
 npyrecords*
+.idea
 
 # temporary files to run on 2nd GPU
 train2.py
