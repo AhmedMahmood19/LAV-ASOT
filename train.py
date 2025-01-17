@@ -80,7 +80,8 @@ class AlignNet(LightningModule):
         self.rho = config.RHO
         self.temp = 0.1
         self.n_clusters = config.N_CLUSTERS
-        self.beta = config.BETA
+        self.weight_seg = config.WEIGHT_SEG
+        self.weight_align = config.WEIGHT_ALIGN
         
         # initialize cluster centers/codebook
         d = config.DTWALIGNMENT.EMBEDDING_SIZE
@@ -139,7 +140,7 @@ class AlignNet(LightningModule):
             cost_matrix_segmentation_X += temp_prior_segmentation_X
             opt_codes_segmentation_X, _ = segmentation_asot.segment_asot(cost_matrix_segmentation_X, mask_X,
                                                                          eps=self.train_eps, alpha=self.alpha_train, radius=self.radius_gw, 
-                                                                         ub_frames=self.ub_frames, ub_actions=self.ub_actions, 
+                                                                         ub_frames=self.ub_frames, ub_actions=True, 
                                                                          lambda_frames=self.lambda_frames_train, 
                                                                          lambda_actions=self.lambda_actions_train, 
                                                                          n_iters=self.n_ot_train, step_size=self.step_size)
@@ -159,7 +160,7 @@ class AlignNet(LightningModule):
             cost_matrix_segmentation_Y += temp_prior_segmentation_Y
             opt_codes_segmentation_Y, _ = segmentation_asot.segment_asot(cost_matrix_segmentation_Y, mask_Y, 
                                                                          eps=self.train_eps, alpha=self.alpha_train, radius=self.radius_gw,
-                                                                         ub_frames=self.ub_frames, ub_actions=self.ub_actions,
+                                                                         ub_frames=self.ub_frames, ub_actions=True,
                                                                          lambda_frames=self.lambda_frames_train,
                                                                          lambda_actions=self.lambda_actions_train,
                                                                          n_iters=self.n_ot_train, step_size=self.step_size)
@@ -219,7 +220,7 @@ class AlignNet(LightningModule):
         self.log('train_loss_alignment', loss_ce_alignment)
 
         # Weighted sum of the segmentation and alignment losses
-        total_loss_ce = (self.beta * loss_ce_segmentation) + loss_ce_alignment
+        total_loss_ce = (self.weight_seg * loss_ce_segmentation) + (self.weight_align * loss_ce_alignment)
         self.log('train_loss', total_loss_ce)
 
         return total_loss_ce
@@ -263,7 +264,14 @@ def main(hparams):
 
     model = AlignNet(hparams)
 
+
     try:
+        # Check if resuming from a checkpoint
+        checkpoint_path = hparams.RESUME_FROM
+        if checkpoint_path:
+            checkpoint = torch.load(checkpoint_path)
+            model.load_state_dict(checkpoint['state_dict'])
+            print(f"Resumed training from checkpoint: {checkpoint_path}")
 
         checkpoint_callback = utils.CheckpointEveryNSteps(hparams.TRAIN.SAVE_INTERVAL_ITERS, filepath=os.path.join(hparams.CKPT_PATH, 'STEPS'))
         csv_logger = CSVLogger(save_dir='LOGS', name="lightning_logs")
@@ -271,13 +279,16 @@ def main(hparams):
         trainer = Trainer(gpus=[1], max_epochs=hparams.TRAIN.EPOCHS, default_root_dir=hparams.ROOT,
                           deterministic=True, callbacks=[checkpoint_callback], 
                           limit_val_batches=0, check_val_every_n_epoch=0, num_sanity_val_steps=0,
-                          logger=csv_logger, log_every_n_steps=5)
+                          logger=csv_logger, log_every_n_steps=5,
+                          resume_from_checkpoint=checkpoint_path)
 
-        # Assuming training will never start from a ckpt and will always start from a fresh model, we can use kmeans to initialize the clusters
-        if hparams.K_MEANS:
+        # If training doesn't start from a ckpt we will use kmeans to initialize the clusters
+        if hparams.K_MEANS and not checkpoint_path:
             # Get the train data loader specifically for fit_clusters()
             train_loader = model.train_dataloader()
+            print("fit_clusters() running...")
             model.fit_clusters(train_loader, hparams.N_CLUSTERS)
+            print("fit_clusters() completed, starting training...")
 
         trainer.fit(model)
 
@@ -285,13 +296,7 @@ def main(hparams):
         pass
 
     finally: 
-        trainer.save_checkpoint(os.path.join(hparams.ROOT, 'final_model_l2norm-{}'
-                                                           '_sigma-{}_alpha-{}'
-                                                           '_lr-{}_bs-{}.pth'.format(hparams.LOSSES.L2_NORMALIZE,
-                                                                                     hparams.LOSSES.SIGMA,
-                                                                                     hparams.LOSSES.ALPHA,
-                                                                                     hparams.TRAIN.LR,
-                                                                                     hparams.TRAIN.BATCH_SIZE)))
+        trainer.save_checkpoint(os.path.join(hparams.ROOT, 'final_model.ckpt'))
 
 
 if __name__ == '__main__':
@@ -303,6 +308,7 @@ if __name__ == '__main__':
     parser.add_argument('--data_path', type=str, help='Path to dataset')
     parser.add_argument('--num_frames', type=int, default=None)
     parser.add_argument('--workers', type=int, default=10)
+    parser.add_argument('--resume_from', type=str, default=None, help='Path to checkpoint to resume training from')
     ###############
     # ASOT args:
     parser.add_argument('--alpha-train', '-at', type=float, default=0.3,
@@ -339,8 +345,10 @@ if __name__ == '__main__':
                         help='do not initialize clusters with kmeans default = True')
     parser.add_argument('--n-clusters', '-c', type=int, default=5,
                         help='number of actions/clusters')
-    parser.add_argument('--beta', '-b', type=float, default=10,
-                        help='the weight used when combining alignment and segmentation losses')
+    parser.add_argument('--weight-seg', '-wseg', type=float, default=1,
+                        help='weight for segmentation loss')
+    parser.add_argument('--weight-align', '-walign', type=float, default=1,
+                        help='weight for alignment loss')
     ###############
 
     args = parser.parse_args()
@@ -358,6 +366,7 @@ if __name__ == '__main__':
         CONFIG.EVAL.NUM_FRAMES = args.num_frames
     if args.workers:
         CONFIG.DATA.WORKERS = args.workers
+    CONFIG.RESUME_FROM = args.resume_from
     #################
     # ASOT args stored into config:
     if args.alpha_train:
@@ -386,9 +395,9 @@ if __name__ == '__main__':
         CONFIG.RHO = args.rho
     if args.n_clusters:
         CONFIG.N_CLUSTERS = args.n_clusters
-    if args.beta:
-        CONFIG.BETA = args.beta
     # NOTE: the default values of these args cause the if condition to fail, so we wont use the if condition for them
+    CONFIG.WEIGHT_SEG = args.weight_seg
+    CONFIG.WEIGHT_ALIGN = args.weight_align
     CONFIG.K_MEANS = args.k_means
     CONFIG.STEP_SIZE = args.step_size
     CONFIG.UB_FRAMES = args.ub_frames
