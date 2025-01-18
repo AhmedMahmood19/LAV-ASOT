@@ -159,43 +159,6 @@ class AlignNet(LightningModule):
         self.log('train_loss', loss_ce)
         return loss_ce
 
-    # def validation_step(self, batch, batch_idx):
-
-    #     (a_X, _, a_steps, a_seq_len), (b_X, _, b_steps, b_seq_len) = batch
-
-    #     X = torch.cat([a_X, b_X])
-    #     embs = self.forward(X)
-    #     a_embs, b_embs = torch.split(embs, a_X.size(0), dim=0)
-
-    #     loss = 0.
-
-    #     for a_emb, a_idx, a_len, b_emb, b_idx, b_len in zip(a_embs.unsqueeze(1), a_steps, a_seq_len, b_embs.unsqueeze(1), b_steps, b_seq_len):
-
-    #         loss += self.lav_loss(a_emb, b_emb, a_idx, b_idx, a_len, b_len, logger=self.logger)
-
-    #     loss = loss / self.batch_size
-
-    #     tensorboard_logs = {'val_loss': loss}
-
-    #     return {'val_loss': loss, 'log': tensorboard_logs}
-
-    # def validation_epoch_end(self, outputs):
-
-    #     avg_loss = torch.stack([x['val_loss'] for x in outputs]).mean()
-    #     tensorboard_logs = {}
-
-    #     for x in outputs:
-    #         for k in x['log']:
-    #             if k not in tensorboard_logs:
-    #                 tensorboard_logs[k] = []
-
-    #             tensorboard_logs[k].append(x['log'][k])
-
-    #     for k, losses in tensorboard_logs.items():
-    #         tensorboard_logs[k] = torch.stack(losses).mean()
-
-    #     return {'val_loss': avg_loss, 'log': tensorboard_logs}
-
     def configure_optimizers(self):
 
         optimizer = optim.Adam(filter(lambda p: p.requires_grad, self.parameters()), lr=self.lr, weight_decay=self.weight_decay)
@@ -212,22 +175,7 @@ class AlignNet(LightningModule):
 
         return data_loader 
 
-    # def val_dataloader(self):
-    #     config = self.hparams.config
-    #     val_path = os.path.join(self.data_path, 'val')
 
-    #     val_transforms = utils.get_transforms(augment=False)
-    #     data = align_dataset.AlignData(val_path, config.EVAL.NUM_FRAMES, config.DATA, transform=val_transforms, flatten=False)
-    #     data_loader = DataLoader(data, batch_size=self.batch_size, shuffle=True, pin_memory=True,
-    #                                     num_workers=config.DATA.WORKERS)
-
-    #     return data_loader
-
-    # def test_step(self, batch, batch_idx):
-    #     return self.validation_step(batch, batch_idx)
-
-    # def test_epoch_end(self, outputs):
-    #     return self.validation_epoch_end(outputs)
 
 
 def main(hparams):
@@ -235,40 +183,31 @@ def main(hparams):
 
     model = AlignNet(hparams)
 
-    # dd_backend = None
-    # if hparams.GPUS < 0 or hparams.GPUS > 1:
-    #     model = nn.SyncBatchNorm.convert_sync_batchnorm(model)
-    #     dd_backend = 'ddp'
 
     try:
+        # Check if resuming from a checkpoint
+        checkpoint_path = hparams.RESUME_FROM
+        if checkpoint_path:
+            checkpoint = torch.load(checkpoint_path)
+            model.load_state_dict(checkpoint['state_dict'])
+            print(f"Resumed training from checkpoint: {checkpoint_path}")
 
         checkpoint_callback = utils.CheckpointEveryNSteps(hparams.TRAIN.SAVE_INTERVAL_ITERS, filepath=os.path.join(hparams.CKPT_PATH, 'STEPS'))
         csv_logger = CSVLogger(save_dir='LOGS', name="lightning_logs")
 
-        trainer = Trainer(gpus=[1], max_epochs=hparams.TRAIN.EPOCHS, default_root_dir=hparams.ROOT,
+        trainer = Trainer(gpus=[0], max_epochs=hparams.TRAIN.EPOCHS, default_root_dir=hparams.ROOT,
                           deterministic=True, callbacks=[checkpoint_callback], 
                           limit_val_batches=0, check_val_every_n_epoch=0, num_sanity_val_steps=0,
-                          logger=csv_logger, log_every_n_steps=5)
+                          logger=csv_logger, log_every_n_steps=5,
+                          resume_from_checkpoint=checkpoint_path)
 
         trainer.fit(model)
-        #  distributed_backend=dd_backend, row_log_interval=10 limit_val_batches=hparams.TRAIN.VAL_PERCENT
+
     except KeyboardInterrupt:
         pass
+
     finally:
-        # trainer.save_checkpoint(os.path.join(os.path.join(hparams.CKPT_PATH, 'STEPS'), 'final_model_l2norm-{}'
-        #                                                         '_sigma-{}_alpha-{}'
-        #                                                         '_lr-{}_bs-{}.pth'.format(hparams.LOSSES.L2_NORMALIZE,
-        #                                                                                     hparams.LOSSES.SIGMA,
-        #                                                                                     hparams.LOSSES.ALPHA,
-        #                                                                                     hparams.TRAIN.LR,
-        #                                                                                     hparams.TRAIN.BATCH_SIZE)))
-        trainer.save_checkpoint(os.path.join(hparams.ROOT, 'final_model_l2norm-{}'
-                                                           '_sigma-{}_alpha-{}'
-                                                           '_lr-{}_bs-{}.pth'.format(hparams.LOSSES.L2_NORMALIZE,
-                                                                                     hparams.LOSSES.SIGMA,
-                                                                                     hparams.LOSSES.ALPHA,
-                                                                                     hparams.TRAIN.LR,
-                                                                                     hparams.TRAIN.BATCH_SIZE)))
+        trainer.save_checkpoint(os.path.join(hparams.ROOT, 'final_model.ckpt'))
 
 
 if __name__ == '__main__':
@@ -280,6 +219,7 @@ if __name__ == '__main__':
     parser.add_argument('--data_path', type=str, help='Path to dataset')
     parser.add_argument('--num_frames', type=int, default=None)
     parser.add_argument('--workers', type=int, default=10)
+    parser.add_argument('--resume_from', type=str, default=None, help='Path to checkpoint to resume training from')
     ###############
     # ASOT args:
     parser.add_argument('--alpha-train', '-at', type=float, default=0.3,
@@ -292,11 +232,10 @@ if __name__ == '__main__':
                         help='number of outer and inner iterations for ASOT solver (eval)')
     parser.add_argument('--step-size', '-ss', type=float, default=None,
                         help='Step size/learning rate for ASOT solver. Worth setting manually if ub-frames && ub-actions')
-    parser.add_argument('--eps-train', '-et', type=float, default=0.065,
+    parser.add_argument('--eps-train', '-et', type=float, default=0.07,
                         help='entropy regularization for OT during training')  # original 0.07, changed 0.065
     parser.add_argument('--eps-eval', '-ee', type=float, default=0.04,
                         help='entropy regularization for OT during val/test')
-    # default=0.04 in ASOT but replaced with 0.02 since thats what we used in the command for VAOT
     parser.add_argument('--radius-gw', '-r', type=float, default=0.02,
                         help='Radius parameter for GW structure loss')  # original 0.02
     parser.add_argument('--ub-frames', '-uf', action='store_true',
@@ -311,8 +250,7 @@ if __name__ == '__main__':
                         help='penalty on balanced frames assumption for test')
     parser.add_argument('--lambda-actions-eval', '-lae', type=float, default=0.01,
                         help='penalty on balanced actions assumption for test')
-    # default=0.1 in ASOT but replaced with 0.25 since thats what we used in the command for VAOT
-    parser.add_argument('--rho', type=float, default=0.2,
+    parser.add_argument('--rho', type=float, default=0.35,
                         help='Factor for global structure weighting term')  # original was 0.25, 0.2 yield better results
     ###############
 
@@ -331,9 +269,10 @@ if __name__ == '__main__':
         CONFIG.EVAL.NUM_FRAMES = args.num_frames
     if args.workers:
         CONFIG.DATA.WORKERS = args.workers
+    CONFIG.RESUME_FROM = args.resume_from
     #################
     # ASOT args stored into config:
-    if args.alpha_train:
+    if args.alpha_train is not None:
         CONFIG.ALPHA_TRAIN = args.alpha_train
     if args.alpha_eval:
         CONFIG.ALPHA_EVAL = args.alpha_eval
@@ -345,7 +284,7 @@ if __name__ == '__main__':
         CONFIG.EPS_TRAIN = args.eps_train
     if args.eps_eval:
         CONFIG.EPS_EVAL = args.eps_eval
-    if args.radius_gw:
+    if args.radius_gw is not None:
         CONFIG.RADIUS_GW = args.radius_gw
     if args.lambda_frames_train:
         CONFIG.LAMBDA_FRAMES_TRAIN = args.lambda_frames_train
@@ -355,7 +294,7 @@ if __name__ == '__main__':
         CONFIG.LAMBDA_FRAMES_EVAL = args.lambda_frames_eval
     if args.lambda_actions_eval:
         CONFIG.LAMBDA_ACTIONS_EVAL = args.lambda_actions_eval
-    if args.rho:
+    if args.rho is not None:
         CONFIG.RHO = args.rho
     # NOTE: the default values of these args, cause the if condition to fail so we wont use the if condition for them
     CONFIG.STEP_SIZE = args.step_size
