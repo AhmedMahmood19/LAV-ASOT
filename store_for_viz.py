@@ -137,8 +137,11 @@ class AlignNet(LightningModule):
             B, N, K = cost_matrix.shape
             dev = cost_matrix.device
             top_row = torch.ones(B, 1, K).to(dev) * self.zeta
+            # top_row = torch.ones(B, 1, K).to(dev) * 0.5
             cost_matrix = torch.cat((top_row, cost_matrix), dim=1)
             left_column = torch.ones(B, N + 1, 1).to(dev) * self.zeta
+            # left_column = torch.ones(B, N + 1, 1).to(dev) * 0.5
+            # cost_matrix = torch.cat((cost_matrix, left_column), dim=2)
             cost_matrix = torch.cat((left_column, cost_matrix), dim=2)
 
 
@@ -154,11 +157,82 @@ class AlignNet(LightningModule):
                                              lambda_actions=self.lambda_actions_train,
                                              n_iters=self.n_ot_train, step_size=self.step_size)
 
+            ## Save opt_codes for visualisations 
+
         # Eq (7)
 
         loss_ce = -((opt_codes * torch.log(codes + num_eps)) * mask_X.unsqueeze(2) * mask_Y.unsqueeze(1)).sum(dim=2).mean()
         self.log('train_loss', loss_ce)
         return loss_ce
+
+    def test_step(self, batch, batch_idx):
+        # Read AlignData's __getitem__() to understand what is returned in the batch
+        # a_X/b_X is a tensor of shape (batchsize=1, 40, Channels=3, Height=224, Width=224) representing the 40 sampled+context frames
+        (a_X, _, a_steps, a_seq_len, a_mask), (b_X, _, b_steps, b_seq_len, b_mask) = batch
+
+        # Concatenate the tensors along the batch dimension
+        X = torch.cat([a_X, b_X])
+        # Pass through the encoder to produce framewise embeddings, the encoder stacks context frames so it outputs less no. of embeddings than the no. of input frames
+        embs = self.forward(X)
+        # a_embs/b_embs is a tensor of shape (batchsize=1, 20, embeddingsize=128) representing the 20 framewise embeddings
+        a_embs, b_embs = torch.split(embs, a_X.size(0), dim=0)
+
+        # Using the variable names used in VAOT
+        features_X, features_Y = a_embs, b_embs
+        T_X = features_X.shape[1]
+        T_Y = features_Y.shape[1]
+        mask_X, mask_Y = a_mask, b_mask
+        # Eq (6)
+        # codes represent a matrix P for each batch element
+        # size of a matrix P is (no. of frames in X x no. of frames in Y)
+        # P_ij represents the prob. of the frame_i in X being aligned with the frame_j in Y
+        codes = torch.exp(features_X @ features_Y.transpose(1, 2) / self.temp)
+        codes = codes / codes.sum(dim=-1, keepdim=True)
+
+        # Produce pseudo-labels using ASOT, note that we don't backpropagate through this part
+        with torch.no_grad():
+            # Calculate the KOT cost matrix from the paragraph above Eq (7)
+            # ρR = rho * Temporal prior
+            temp_prior = asot.temporal_prior(T_X, T_Y, self.rho, features_X.device)
+            # Cost Matrix Ck from section 4.2, no need to divide by norms since both vectors were previously normalized with F.normalize()
+            cost_matrix = 1. - features_X @ features_Y.transpose(1, 2)
+            # Ĉk = Ck + ρR
+            cost_matrix += temp_prior
+
+
+            ## Added for virtual frames
+            B, N, K = cost_matrix.shape
+            dev = cost_matrix.device
+            top_row = torch.ones(B, 1, K).to(dev) * self.zeta
+            # top_row = torch.ones(B, 1, K).to(dev) * 0.5
+            cost_matrix = torch.cat((top_row, cost_matrix), dim=1)
+            left_column = torch.ones(B, N + 1, 1).to(dev) * self.zeta
+            # left_column = torch.ones(B, N + 1, 1).to(dev) * 0.5
+            # cost_matrix = torch.cat((cost_matrix, left_column), dim=2)
+            cost_matrix = torch.cat((left_column, cost_matrix), dim=2)
+
+
+            # opt_codes represent a matrix Tb for each batch element
+            # size of a matrix Tb is (no. of frames in X x no. of frames in Y)
+            # Tb are the (soft) pseudo-labels defined above Eq (7)
+            # Tb_ij represents the prob. of the frame_i in X being aligned with the frame_j in Y
+
+            opt_codes, _ = asot.segment_asot(cost_matrix=cost_matrix, mask_X=mask_X, mask_Y=mask_Y,
+                                             eps=self.train_eps, alpha=self.alpha_train, radius=self.radius_gw,
+                                             ub_frames=self.ub_frames, ub_actions=self.ub_actions,
+                                             lambda_frames=self.lambda_frames_train,
+                                             lambda_actions=self.lambda_actions_train,
+                                             n_iters=self.n_ot_train, step_size=self.step_size)
+
+        # Save opt_codes AKA T for visualisation
+        opt_codes_numpy = opt_codes.cpu().numpy()
+        os.makedirs('T_npyfiles', exist_ok=True)
+        np.save(f'T_npyfiles/T_{batch_idx}.npy', opt_codes_numpy)
+
+        # Save features_X and features_Y
+        os.makedirs('features_npyfiles', exist_ok=True)
+        np.save(f'features_npyfiles/features_X_{batch_idx}.npy', features_X.cpu().numpy())
+        np.save(f'features_npyfiles/features_Y_{batch_idx}.npy', features_Y.cpu().numpy())
 
     def configure_optimizers(self):
 
@@ -171,45 +245,40 @@ class AlignNet(LightningModule):
 
         train_transforms = utils.get_transforms(augment=True)
         data = align_dataset.AlignData(train_path, config.TRAIN.NUM_FRAMES, config.DATA, transform=train_transforms, flatten=False)
-        data_loader = DataLoader(data, batch_size=self.batch_size, shuffle=True, pin_memory=True,
+        data_loader = DataLoader(data, batch_size=self.batch_size, shuffle=False, pin_memory=True,
                                         num_workers=config.DATA.WORKERS)
 
-        return data_loader 
-
-
-
+        return data_loader
 
 def main(hparams):
     seed_everything(hparams.SEED)
 
     model = AlignNet(hparams)
 
+    # Check if resuming from a checkpoint or not
+    checkpoint_path = hparams.RESUME_FROM
+    if checkpoint_path is None:
+        print("TESTING FAILED: Please provide a checkpoint path in the arg RESUME_FROM !!!")
+        return
 
-    try:
-        # Check if resuming from a checkpoint
-        checkpoint_path = hparams.RESUME_FROM
-        if checkpoint_path:
-            checkpoint = torch.load(checkpoint_path)
-            model.load_state_dict(checkpoint['state_dict'])
-            print(f"Resumed training from checkpoint: {checkpoint_path}")
+    checkpoint = torch.load(checkpoint_path)
+    model.load_state_dict(checkpoint['state_dict'])
+    print(f"Resumed training from checkpoint: {checkpoint_path}")
 
-        checkpoint_callback = utils.CheckpointEveryNSteps(hparams.TRAIN.SAVE_INTERVAL_ITERS, filepath=os.path.join(hparams.CKPT_PATH, 'STEPS'))
-        csv_logger = CSVLogger(save_dir=hparams.CKPT_PATH.strip('/').split('/')[-2], name="lightning_logs")
+    # Initialize the trainer without training
+    trainer = Trainer(gpus=[1], max_epochs=1, default_root_dir=hparams.ROOT,
+                      deterministic=True, logger=False,  # No logging during testing
+                      limit_train_batches=0,  # We are not training, so no training batches
+                      check_val_every_n_epoch=0,  # No validation in test mode
+                      num_sanity_val_steps=0)  # No sanity check
 
-        trainer = Trainer(gpus=[hparams.GPUS], max_epochs=hparams.TRAIN.EPOCHS, default_root_dir=hparams.ROOT,
-                          deterministic=True, callbacks=[checkpoint_callback], 
-                          limit_val_batches=0, check_val_every_n_epoch=0, num_sanity_val_steps=0,
-                          logger=csv_logger, log_every_n_steps=5,
-                          resume_from_checkpoint=checkpoint_path)
+    # Load the test data using the same DataLoader as training (with shuffle=False)
+    test_dataloader = model.train_dataloader()
 
-        trainer.fit(model)
+    # Use the trainer to run the test step
+    trainer.test(model, dataloaders=test_dataloader)
 
-    except KeyboardInterrupt:
-        pass
-
-    finally:
-        trainer.save_checkpoint(os.path.join(hparams.ROOT, 'final_model.ckpt'))
-
+    print("Testing completed.")
 
 if __name__ == '__main__':
 

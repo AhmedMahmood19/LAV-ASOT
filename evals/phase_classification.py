@@ -105,10 +105,11 @@ def _compute_ap(query_frames, support_frames, query_labels, support_labels, quer
             if log:
                 frame_logs[f'AP@{k}'][query_frame_paths[i]] = {
                     'neighbours': support_frame_paths[indices[i]].tolist(),
-                    'neighbours labels': b.tolist(),
-                    'query frame label': query_labels[i],
-                    f'AP@{k}': val
+                    'neighbours labels': [int(label) for label in b],  # Convert NumPy int64 to int
+                    'query frame label': int(query_labels[i]),  # Convert NumPy int64 to int
+                    f'AP@{k}': float(val)  # Convert NumPy float64 to Python float (if needed)
                 }
+
 
 
     # Return the AP sums for the query set
@@ -144,7 +145,7 @@ def compute_ap(embeddings, labels, names, frame_paths, log=False):
 
 
         if log:
-            with open(os.path.join("AP-Logs", f"framelogs-{names[i]}.json"), 'w') as json_file:
+            with open(os.path.join("AP-Logs", f"framelogs-{names[i].replace('/', '-')}.json"), 'w') as json_file:
                 json.dump(frame_logs, json_file, indent=4)
 
     # Calculate the mean AP@5, AP@10, and AP@15 scores across all frames in the dataset
