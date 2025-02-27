@@ -11,6 +11,7 @@ import numpy as np
 
 import utils
 import align_dataset
+# import align_dataset_multi_action
 from models import BaseModel, ConvEmbedder
 from config import CONFIG
 from pytorch_lightning import Trainer, seed_everything
@@ -38,16 +39,6 @@ class AlignNet(LightningModule):
                 utils.freeze(module=self.base_cnn, train_bn=False)
 
         self.emb = ConvEmbedder(emb_size=config.DTWALIGNMENT.EMBEDDING_SIZE, l2_normalize=config.LOSSES.L2_NORMALIZE)
-
-        self.lav_loss = losses.LAV(alpha=config.LOSSES.ALPHA, sigma=config.LOSSES.SIGMA,
-                                   margin=config.LOSSES.IDM_IDX_MARGIN,
-                                   num_frames=config.TRAIN.NUM_FRAMES, dtw_gamma=config.DTWALIGNMENT.SDTW_GAMMA,
-                                   dtw_normalize=config.DTWALIGNMENT.SDTW_NORMALIZE, debug=False)
-
-        # params
-        self.l2_normalize = config.LOSSES.L2_NORMALIZE
-        self.alpha = config.LOSSES.ALPHA
-        self.sigma = config.LOSSES.SIGMA
 
         self.lr = config.TRAIN.LR
         self.weight_decay = config.TRAIN.WEIGHT_DECAY
@@ -170,6 +161,10 @@ class AlignNet(LightningModule):
         train_path = os.path.join(self.data_path, 'train')
 
         train_transforms = utils.get_transforms(augment=True)
+        
+        #### This is for training a Multi-Action model on Penn Action 
+        # data = align_dataset_multi_action.AlignData(self.data_path, config.TRAIN.NUM_FRAMES, config.DATA, transform=train_transforms, flatten=False)
+        
         data = align_dataset.AlignData(train_path, config.TRAIN.NUM_FRAMES, config.DATA, transform=train_transforms, flatten=False)
         data_loader = DataLoader(data, batch_size=self.batch_size, shuffle=True, pin_memory=True,
                                         num_workers=config.DATA.WORKERS)
@@ -205,10 +200,7 @@ def main(hparams):
         trainer.fit(model)
 
     except KeyboardInterrupt:
-        pass
-
-    finally:
-        trainer.save_checkpoint(os.path.join(hparams.ROOT, 'final_model.ckpt'))
+        print("Interrupted by user. Exiting...")
 
 
 if __name__ == '__main__':
