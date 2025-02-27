@@ -226,13 +226,13 @@ class AlignNet(LightningModule):
 
         # Save opt_codes AKA T for visualisation
         opt_codes_numpy = opt_codes.cpu().numpy()
-        os.makedirs('T_npyfiles', exist_ok=True)
-        np.save(f'T_npyfiles/T_{batch_idx}.npy', opt_codes_numpy)
+        os.makedirs('npy_T-matrix', exist_ok=True)
+        np.save(f'npy_T-matrix/T_{batch_idx}.npy', opt_codes_numpy)
 
         # Save features_X and features_Y
-        os.makedirs('features_npyfiles', exist_ok=True)
-        np.save(f'features_npyfiles/features_X_{batch_idx}.npy', features_X.cpu().numpy())
-        np.save(f'features_npyfiles/features_Y_{batch_idx}.npy', features_Y.cpu().numpy())
+        os.makedirs('npy_embeddings', exist_ok=True)
+        np.save(f'npy_embeddings/emb_X_{batch_idx}.npy', features_X.cpu().numpy())
+        np.save(f'npy_embeddings/emb_Y_{batch_idx}.npy', features_Y.cpu().numpy())
 
     def configure_optimizers(self):
 

@@ -10,8 +10,8 @@ model = "(VAOT)"
 perp=6
 
 # Load features Shape (20,128)
-features_X = np.load(f'{model}features_npyfiles/features_X_{batch_idx}.npy').squeeze(0)
-features_Y = np.load(f'{model}features_npyfiles/features_Y_{batch_idx}.npy').squeeze(0) 
+features_X = np.load(f'{model}npy_embeddings/emb_X_{batch_idx}.npy').squeeze(0)
+features_Y = np.load(f'{model}npy_embeddings/emb_Y_{batch_idx}.npy').squeeze(0) 
 
 # Apply t-SNE (reducing 128D to 2D) on combined data
 tsne = TSNE(n_components=2, perplexity=perp, random_state=42)
@@ -39,4 +39,4 @@ ax.set_xticks([])
 ax.set_yticks([])
 
 # Save the plot
-plt.savefig(f"{batch_idx}-perp{perp}-{model}-test.png")
+plt.savefig(f"{batch_idx}-perp{perp}-{model}-tsne_plot.png")

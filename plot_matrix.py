@@ -9,24 +9,28 @@ def plot_matrix(matrix, output_path, xlabel='Frame index (Video X)', ylabel='Fra
     Visualizes a single matrix with a color map and labeled axes.
     """
 
-    plt.figure(figsize=(6, 4))
-    # plt.figure(figsize=(36, 16))
+    # plt.figure(figsize=(6, 4))
+    plt.figure(figsize=(10, 10))
 
     cmap = mcolors.LinearSegmentedColormap.from_list("custom_cmap", ["white", "#006600"])
-    # cmap = 'viridis'
     
     # Plot the matrix
-    plt.imshow(matrix, aspect='auto', cmap=cmap)
+    plt.pcolormesh(matrix, cmap=cmap)
     
     # Move x-axis to the top
     plt.gca().xaxis.tick_top()
 
-    # Set ticks at intervals of 2 for both axes
-    plt.xticks(np.arange(0, matrix.shape[1], 2))  # X-axis tick positions
-    plt.yticks(np.arange(0, matrix.shape[0], 2))  # Y-axis tick positions
+    # Hide ticks
+    plt.gca().set_xticks([])
+    plt.gca().set_yticks([])
 
-    plt.xlabel(xlabel)
-    plt.ylabel(ylabel)
+    # Set ticks at intervals of 2 for both axes
+    # plt.xticks(np.arange(0, matrix.shape[1], 2))  # X-axis tick positions
+    # plt.yticks(np.arange(0, matrix.shape[0], 2))  # Y-axis tick positions
+
+    plt.gca().xaxis.set_label_position('top')
+    plt.xlabel(xlabel, fontsize=22)
+    plt.ylabel(ylabel, fontsize=22)
 
     # ### Add text values in each cell
     # for i in range(matrix.shape[0]):
@@ -38,19 +42,19 @@ def plot_matrix(matrix, output_path, xlabel='Frame index (Video X)', ylabel='Fra
     
     # Save the plot
     plt.tight_layout()
-    plt.savefig(output_path)
+    plt.savefig(output_path, format='pdf', bbox_inches='tight')
     plt.close()
 
-# for batch_idx in [9, 22, 33]:
 for batch_idx in range(69):
-    # mattype="Ck"
-    mattype="T"
-    # mattype="afternnz"
-    matrix = np.load(f"(LAV){mattype}_npyfiles/{mattype}_{batch_idx}.npy")
+    # model = "(VAOT)"
+    model = "(LAV)"
+    
+    ## When you create the folder using store_for_viz.py, make sure to rename it with the model at the start
+    matrix = np.load(f"{model}npy_T-matrix/T_{batch_idx}.npy")
     matrix = matrix.squeeze()
 
 
-    filtered_matrix = np.zeros_like(matrix)  # Initialize with zeros (purple)
+    filtered_matrix = np.zeros_like(matrix)  # Initialize with zeros
 
     ### Keep only max values of each row
     # max_indices = matrix.argmax(axis=1)  # Get max index for each row
@@ -64,6 +68,6 @@ for batch_idx in range(69):
         filtered_matrix[x, i] = 1  # Retain only max values and set the max value to 1 so matrix only has 2 colors
 
 
-    os.makedirs(f"{mattype}_matrix_plots", exist_ok=True)
-    path = f"{mattype}_matrix_plots/{batch_idx}_{mattype}_plot.png"
+    os.makedirs(f"{model}T_matrix_plots", exist_ok=True)
+    path = f"{model}T_matrix_plots/{batch_idx}_T_plot.pdf"
     plot_matrix(matrix=filtered_matrix, output_path=path)
